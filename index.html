@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1"/>
+<title>SwingLab</title>
+<style>
+  :root{--navy:#1F3A5F;--red:#C8102E;--ink:#1b2430;--mut:#6b7785;--line:#e7ebf0;--good:#2E7D32;}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;background:#0e1116;color:var(--ink)}
+  .app{max-width:480px;margin:0 auto;min-height:100vh;background:#f4f6f9;display:flex;flex-direction:column;position:relative}
+  .topbar{background:var(--navy);color:#fff;padding:16px 18px;display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:10}
+  .logo{font-weight:800;font-size:20px}.logo b{color:#ff5b6e}
+  .topbar .sub{margin-left:auto;font-size:12px;opacity:.85}
+  .view{flex:1;overflow-y:auto;padding:14px;padding-bottom:80px}
+  .hidden{display:none!important}
+  .card{background:#fff;border:1px solid var(--line);border-radius:16px;padding:14px;margin-bottom:12px;box-shadow:0 2px 6px rgba(20,40,70,.04)}
+  .card h3{margin:0 0 10px;font-size:13px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em}
+  .stage{position:relative;width:100%;background:#000;border-radius:12px;overflow:hidden;aspect-ratio:9/16;display:grid;place-items:center}
+  .stage video{width:100%;height:100%;object-fit:contain;display:block}
+  .stage canvas{position:absolute;inset:0;width:100%;height:100%}
+  .drop{border:2px dashed #c4cfdd;border-radius:14px;padding:26px 14px;text-align:center;color:var(--mut);background:#fbfcfe}
+  .drop b{color:var(--navy)}
+  .btn{display:block;width:100%;border:0;background:var(--red);color:#fff;font-weight:700;font-size:15px;padding:14px;border-radius:12px;margin-top:10px;cursor:pointer}
+  .btn:disabled{opacity:.5}
+  .ghost{background:#fff;border:1px solid var(--line);color:var(--navy);font-weight:700;width:100%;padding:12px;border-radius:12px;margin-top:8px;cursor:pointer}
+  input[type=file]{display:none}
+  .bar{height:10px;background:#e9edf2;border-radius:6px;overflow:hidden;margin-top:6px}
+  .bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,#3a6ea5,#1F3A5F);transition:width .15s}
+  .status{font-size:13px;color:var(--mut);margin-top:8px;min-height:18px}
+  .err{color:var(--red);font-size:13px;margin-top:8px}
+  .scoreRow{display:flex;align-items:center;gap:14px}
+  .ring{width:84px;height:84px;border-radius:50%;flex:0 0 auto;display:grid;place-items:center}
+  .ring i{width:64px;height:64px;border-radius:50%;background:#fff;display:grid;place-items:center;font-style:normal;font-weight:800;font-size:22px;color:var(--navy)}
+  .scoreRow .lab{font-size:13px;color:var(--mut)}.scoreRow .lab b{display:block;color:var(--ink);font-size:16px;margin-top:2px}
+  .metrics{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .metric{background:#f7f9fc;border:1px solid var(--line);border-radius:12px;padding:10px}
+  .metric .v{font-size:20px;font-weight:800;color:var(--navy)}.metric .v small{font-size:12px;font-weight:600;color:var(--mut)}
+  .metric .k{font-size:11.5px;color:var(--mut);margin-top:2px}
+  .metric.flag{border-color:#f3c9cf;background:#fdf3f4}.metric.flag .v{color:var(--red)}
+  .phaseGrid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+  .phaseGrid canvas{width:100%;border-radius:8px;background:#000;display:block}
+  .phaseGrid .cap{font-size:10px;text-align:center;color:var(--mut);margin-top:3px;font-weight:700;letter-spacing:.04em}
+  .fix{border-left:4px solid var(--red)}
+  .fix .tagline{display:inline-block;background:#fdeef0;color:var(--red);font-size:11px;font-weight:700;padding:3px 8px;border-radius:20px;text-transform:uppercase;letter-spacing:.05em}
+  .fix h2{margin:8px 0 6px;font-size:18px}
+  .fix p{margin:0;font-size:14px;color:#445;line-height:1.5}
+  .drill{margin-top:10px;font-size:13px;background:#eef5ee;border:1px solid #d6e7d6;color:#27502b;border-radius:10px;padding:10px}
+  .spark{display:flex;align-items:flex-end;gap:8px;height:120px;padding-top:18px}
+  .sbar{flex:1;background:linear-gradient(180deg,#3a6ea5,#1F3A5F);border-radius:6px 6px 0 0;position:relative}
+  .sbar span{position:absolute;top:-16px;left:0;right:0;text-align:center;font-size:10px;color:var(--mut);font-weight:700}
+  .sbar small{position:absolute;bottom:-18px;left:0;right:0;text-align:center;font-size:9.5px;color:var(--mut)}
+  .player{display:flex;align-items:center;gap:12px;padding:11px 4px;border-bottom:1px solid var(--line)}
+  .player:last-child{border-bottom:0}
+  .ava{width:38px;height:38px;border-radius:50%;background:var(--navy);color:#fff;display:grid;place-items:center;font-weight:700;font-size:14px;flex:0 0 auto}
+  .player .nm{font-weight:700;font-size:14px}.player .st{font-size:12px;color:var(--mut)}
+  .chip{margin-left:auto;font-size:11px;font-weight:700;padding:4px 9px;border-radius:20px}
+  .chip.up{background:#eef5ee;color:#27502b}.chip.new{background:#fff4e5;color:#9a6212}.chip.watch{background:#fdeef0;color:var(--red)}
+  .tabs{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:480px;display:flex;background:#fff;border-top:1px solid var(--line)}
+  .tab{flex:1;text-align:center;padding:9px 0 11px;font-size:11px;color:var(--mut);cursor:pointer;font-weight:600}
+  .tab.active{color:var(--navy)}.tab .ic{display:block;font-size:19px;line-height:1.1}
+  .demoNote{font-size:11px;color:var(--mut);text-align:center;margin:6px 0 0}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="topbar"><div class="logo">Swing<b>Lab</b></div><div class="sub" id="sub">Analyze a swing</div></div>
+
+  <!-- ANALYZE -->
+  <div class="view" id="v-analyze">
+    <div class="card" id="uploadCard">
+      <h3>Upload a swing</h3>
+      <label class="drop" for="file" id="droplab">
+        <div style="font-size:30px">⚾</div>
+        <div><b>Tap to choose a swing video</b></div>
+        <div style="font-size:12px;margin-top:4px">Side-on view works best. Slow-motion is even better.</div>
+      </label>
+      <input type="file" id="file" accept="video/*"/>
+      <button class="btn" id="analyzeBtn" disabled>Analyze swing</button>
+      <div class="bar hidden" id="progWrap"><i id="prog"></i></div>
+      <div class="status" id="status"></div>
+      <div class="err" id="err"></div>
+    </div>
+
+    <div class="card hidden" id="stageCard">
+      <h3>Tracked swing</h3>
+      <div class="stage"><video id="vid" playsinline muted></video><canvas id="overlay"></canvas></div>
+      <button class="ghost" id="replayBtn">▶ Play tracked swing</button>
+    </div>
+
+    <div id="results" class="hidden">
+      <div class="card">
+        <div class="scoreRow">
+          <div class="ring" id="ring"><i id="scoreNum">–</i></div>
+          <div class="lab">Swing score<b id="scoreLab">—</b><span style="font-size:12px;color:var(--mut)" id="trackLab"></span></div>
+        </div>
+      </div>
+      <div class="card">
+        <h3>What we measured</h3>
+        <div class="metrics" id="metrics"></div>
+      </div>
+      <div class="card">
+        <h3>Swing phases (auto-detected)</h3>
+        <div class="phaseGrid">
+          <div><canvas id="kf0"></canvas><div class="cap">LOAD</div></div>
+          <div><canvas id="kf1"></canvas><div class="cap">CONTACT</div></div>
+          <div><canvas id="kf2"></canvas><div class="cap">FOLLOW</div></div>
+        </div>
+      </div>
+      <div class="card fix">
+        <span class="tagline">Your #1 fix</span>
+        <h2 id="fixTitle"></h2>
+        <p id="fixBody"></p>
+        <div class="drill" id="fixDrill"></div>
+      </div>
+      <button class="ghost" id="againBtn">Analyze another swing</button>
+      <div class="demoNote">Prototype · pose tracking runs on your device. Score &amp; coaching are heuristic.</div>
+    </div>
+  </div>
+
+  <!-- PROGRESS (sample) -->
+  <div class="view hidden" id="v-progress">
+    <div class="card"><h3>Head drift — last 5 sessions (sample)</h3>
+      <div class="spark">
+        <div class="sbar" style="height:95%"><span>18"</span><small>Jun 2</small></div>
+        <div class="sbar" style="height:84%"><span>16"</span><small>Jun 7</small></div>
+        <div class="sbar" style="height:74%"><span>14"</span><small>Jun 12</small></div>
+        <div class="sbar" style="height:62%"><span>12"</span><small>Jun 16</small></div>
+        <div class="sbar" style="height:58%;background:linear-gradient(180deg,#39a35a,#2E7D32)"><span>11"</span><small>Today</small></div>
+      </div>
+      <p style="font-size:13px;color:#445;margin:22px 0 0">Down <b>39%</b> in two weeks. Lower is better.</p>
+    </div>
+    <div class="card"><h3>Streak &amp; wins</h3>
+      <p style="font-size:13px;color:#445;margin:0">🔥 6-day streak · ⭐ New tempo PR · 12 swings analyzed this week.</p>
+    </div>
+    <div class="demoNote">Sample data — illustrates the progress experience.</div>
+  </div>
+
+  <!-- TEAM (sample) -->
+  <div class="view hidden" id="v-team">
+    <div class="card"><h3>Coach Diaz · 16U Bandits · 13 players (sample)</h3>
+      <div class="player"><div class="ava">JM</div><div><div class="nm">Jake M.</div><div class="st">Head drift improving</div></div><div class="chip up">▲ fix working</div></div>
+      <div class="player"><div class="ava">TR</div><div><div class="nm">Tommy R.</div><div class="st">New bat-speed PR</div></div><div class="chip new">★ PR</div></div>
+      <div class="player"><div class="ava">LC</div><div><div class="nm">Luis C.</div><div class="st">Stride collapsing early</div></div><div class="chip watch">● watch</div></div>
+      <div class="player"><div class="ava">AS</div><div><div class="nm">Andre S.</div><div class="st">No swings in 5 days</div></div><div class="chip watch">● nudge</div></div>
+    </div>
+    <div class="demoNote">Sample data — illustrates the coach dashboard.</div>
+  </div>
+
+  <div class="tabs">
+    <div class="tab active" data-v="analyze"><span class="ic">⚾</span>Analyze</div>
+    <div class="tab" data-v="progress"><span class="ic">📈</span>Progress</div>
+    <div class="tab" data-v="team"><span class="ic">👥</span>Team</div>
+  </div>
+</div>
+
+<script type="module">
+import { PoseLandmarker, FilesetResolver, DrawingUtils }
+  from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.12";
+
+const $ = s => document.querySelector(s);
+const file=$("#file"), analyzeBtn=$("#analyzeBtn"), vid=$("#vid"), overlay=$("#overlay");
+const statusEl=$("#status"), errEl=$("#err"), prog=$("#prog"), progWrap=$("#progWrap");
+
+let landmarker=null, samples=[], chosenURL=null;
+const octx=overlay.getContext("2d");
+let du=null;
+
+// landmark indices
+const I={nose:0,Lsh:11,Rsh:12,Lel:13,Rel:14,Lwr:15,Rwr:16,Lhip:23,Rhip:24,Lank:27,Rank:28};
+
+// ---- tabs ----
+document.querySelectorAll(".tab").forEach(t=>t.onclick=()=>{
+  const v=t.dataset.v;
+  ["analyze","progress","team"].forEach(k=>$("#v-"+k).classList.toggle("hidden",k!==v));
+  document.querySelectorAll(".tab").forEach(x=>x.classList.toggle("active",x.dataset.v===v));
+  $("#sub").textContent = v==="team"?"Coach view":(v==="progress"?"Progress":"Analyze a swing");
+});
+
+file.onchange=()=>{
+  errEl.textContent="";
+  if(!file.files[0]) return;
+  if(chosenURL) URL.revokeObjectURL(chosenURL);
+  chosenURL=URL.createObjectURL(file.files[0]);
+  vid.src=chosenURL;
+  $("#stageCard").classList.remove("hidden");
+  $("#droplab").querySelector("b").textContent = file.files[0].name.slice(0,28);
+  analyzeBtn.disabled=false;
+  statusEl.textContent="Ready. Tap Analyze swing.";
+};
+
+async function ensureModel(){
+  if(landmarker) return;
+  statusEl.textContent="Loading pose model… (first time only)";
+  const vision=await FilesetResolver.forVisionTasks(
+    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.12/wasm");
+  landmarker=await PoseLandmarker.createFromOptions(vision,{
+    baseOptions:{
+      modelAssetPath:"https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
+      delegate:"GPU"
+    },
+    runningMode:"VIDEO", numPoses:1, minPoseDetectionConfidence:0.5, minTrackingConfidence:0.5
+  });
+}
+
+function seek(t){return new Promise(res=>{
+  const h=()=>{vid.removeEventListener("seeked",h);res();};
+  vid.addEventListener("seeked",h);
+  vid.currentTime=Math.min(t, Math.max(0,vid.duration-0.001));
+});}
+
+analyzeBtn.onclick=async()=>{
+  try{
+    errEl.textContent="";
+    analyzeBtn.disabled=true; progWrap.classList.remove("hidden");
+    await ensureModel();
+    if(!vid.duration||!isFinite(vid.duration)){ await new Promise(r=>{vid.onloadedmetadata=r;}); }
+    // sizing
+    const W=Math.min(480, vid.videoWidth||480), scale=W/(vid.videoWidth||480);
+    const H=Math.round((vid.videoHeight||854)*scale);
+    overlay.width=vid.videoWidth||480; overlay.height=vid.videoHeight||854;
+    du=new DrawingUtils(octx);
+    const pc=document.createElement("canvas"); pc.width=W; pc.height=H;
+    const pctx=pc.getContext("2d");
+
+    samples=[];
+    const dur=Math.min(vid.duration, 12);  // cap 12s
+    const step=1/30, maxN=360;
+    let t=0, n=0;
+    statusEl.textContent="Analyzing swing…";
+    while(t<=dur && n<maxN){
+      await seek(t);
+      pctx.drawImage(vid,0,0,W,H);
+      let r=null;
+      try{ r=landmarker.detectForVideo(pc, Math.round(t*1000)); }catch(e){ r=null; }
+      const lm=(r&&r.landmarks&&r.landmarks[0])?r.landmarks[0]:null;
+      samples.push({t,lm});
+      drawOverlayFor(lm);
+      n++; t+=step;
+      prog.style.width=Math.round(100*t/dur)+"%";
+    }
+    const ok=samples.filter(s=>s.lm).length;
+    if(ok<8){ throw new Error("Couldn't track a body in this clip. Try a clearer side-on video with the full body in frame."); }
+    computeAndRender();
+    statusEl.textContent="Done. Scroll for results.";
+    $("#results").classList.remove("hidden");
+    $("#results").scrollIntoView({behavior:"smooth"});
+  }catch(e){
+    errEl.textContent=(e&&e.message)?e.message:String(e);
+    statusEl.textContent="";
+  }finally{
+    analyzeBtn.disabled=false;
+  }
+};
+
+function drawOverlayFor(lm){
+  octx.clearRect(0,0,overlay.width,overlay.height);
+  if(!lm) return;
+  du.drawConnectors(lm, PoseLandmarker.POSE_CONNECTIONS, {color:"#FFFFFF", lineWidth:3});
+  du.drawLandmarks(lm, {color:"#22d3ee", fillColor:"#C8102E", radius:3, lineWidth:1});
+}
+
+// ---------- metrics ----------
+const TORSO_IN=22;
+function px(lm,i,dim){return dim==="x"?lm[i].x*overlay.width:lm[i].y*overlay.height;}
+function mid(a,b){return [(a[0]+b[0])/2,(a[1]+b[1])/2];}
+function pt(lm,i){return [lm[i].x*overlay.width, lm[i].y*overlay.height];}
+function dist(a,b){return Math.hypot(a[0]-b[0],a[1]-b[1]);}
+function median(a){a=a.slice().sort((x,y)=>x-y);return a[Math.floor(a.length/2)]||1;}
+
+function interpSeries(getter){
+  // returns array over samples, linear-interpolating missing
+  const raw=samples.map(s=>s.lm?getter(s.lm):null);
+  const idx=raw.map((v,i)=>v===null?-1:i).filter(i=>i>=0);
+  return raw.map((v,i)=>{
+    if(v!==null) return v;
+    // nearest interpolation
+    let lo=idx.filter(j=>j<i).pop(), hi=idx.find(j=>j>i);
+    if(lo===undefined&&hi===undefined) return [0,0];
+    if(lo===undefined) return raw[hi];
+    if(hi===undefined) return raw[lo];
+    const f=(i-lo)/(hi-lo);
+    return [raw[lo][0]+(raw[hi][0]-raw[lo][0])*f, raw[lo][1]+(raw[hi][1]-raw[lo][1])*f];
+  });
+}
+function smooth(arr,k=5){
+  return arr.map((_,i)=>{
+    let sx=0,sy=0,c=0;
+    for(let j=Math.max(0,i-(k>>1));j<=Math.min(arr.length-1,i+(k>>1));j++){sx+=arr[j][0];sy+=arr[j][1];c++;}
+    return [sx/c,sy/c];
+  });
+}
+
+let analysis=null;
+function computeAndRender(){
+  const N=samples.length;
+  const fps=30;
+  const sh=smooth(interpSeries(l=>mid(pt(l,I.Lsh),pt(l,I.Rsh))));
+  const hip=smooth(interpSeries(l=>mid(pt(l,I.Lhip),pt(l,I.Rhip))));
+  const hands=smooth(interpSeries(l=>mid(pt(l,I.Lwr),pt(l,I.Rwr))));
+  const nose=smooth(interpSeries(l=>pt(l,I.nose)));
+  const Lank=smooth(interpSeries(l=>pt(l,I.Lank)));
+  const Rank=smooth(interpSeries(l=>pt(l,I.Rank)));
+  const torso_px=median(sh.map((s,i)=>dist(s,hip[i])));
+  const px2in=TORSO_IN/torso_px;
+
+  // hand speed
+  const spd=hands.map((h,i)=> i===0?0: dist(h,hands[i-1])*px2in*fps);
+  const g=Math.min(8, Math.floor(N/6));
+  let contact=g, best=-1;
+  for(let i=g;i<N-g;i++){ if(spd[i]>best){best=spd[i];contact=i;} }
+  let w0=Math.max(g, contact-Math.round(0.8*fps)), w1=Math.max(w0+1, contact-Math.round(0.1*fps));
+  let load=w0, mn=1e9;
+  for(let i=w0;i<w1;i++){ if(spd[i]<mn){mn=spd[i];load=i;} }
+  let follow=Math.min(N-1, contact+Math.round(0.3*fps));
+
+  const headTravel = Math.max(...range(load,contact).map(i=>dist(nose[i],nose[load]))) * px2in;
+  const tempoMs = Math.round((contact-load)/fps*1000);
+  const peakMph = spd[contact]/17.6;
+  // lead ankle = more displaced horizontally load->contact
+  const dL=Math.abs(Lank[contact][0]-Lank[load][0]), dR=Math.abs(Rank[contact][0]-Rank[load][0]);
+  const strideIn = Math.max(dL,dR)*px2in;
+  // visibility
+  let vsum=0,vc=0;
+  for(const s of samples){ if(s.lm){ for(const k in I){ const v=s.lm[I[k]].visibility; vsum+=(v==null?1:v); vc++; } } }
+  const meanVis=vc?vsum/vc:0;
+
+  analysis={N,fps,sh,hip,hands,nose,load,contact,follow,headTravel,tempoMs,peakMph,strideIn,meanVis};
+  renderResults();
+}
+function range(a,b){const r=[];for(let i=a;i<=b;i++)r.push(i);return r;}
+
+function renderResults(){
+  const a=analysis;
+  // score heuristic
+  let score=100;
+  if(a.headTravel>3) score-=Math.min(28,(a.headTravel-3)*3.2);
+  if(a.tempoMs>900) score-=Math.min(15,(a.tempoMs-900)/40);
+  if(a.tempoMs<200) score-=8;
+  score=Math.max(48,Math.round(score));
+  $("#scoreNum").textContent=score;
+  $("#ring").style.background=`conic-gradient(${score>=80?'#2E7D32':score>=68?'#C8102E':'#9a6212'} ${score}%, #e9edf2 0)`;
+  $("#scoreLab").textContent = score>=82?"Clean, repeatable swing": score>=68?"Solid, one thing to clean up":"Good base, a couple fixes";
+  $("#trackLab").textContent = `Tracking confidence ${Math.round(a.meanVis*100)}%`;
+
+  const flagHead=a.headTravel>6;
+  $("#metrics").innerHTML=[
+    metric((a.tempoMs/1000).toFixed(2),"s","Swing tempo (load→contact)",false),
+    metric(Math.round(a.headTravel),"in","Head drift toward pitcher",flagHead),
+    metric(a.strideIn.toFixed(1),"in","Stride length",false),
+    metric(Math.round(a.meanVis*100),"%","Tracking confidence",false)
+  ].join("");
+
+  drawKeyframe("#kf0",a.load); drawKeyframe("#kf1",a.contact); drawKeyframe("#kf2",a.follow);
+
+  const fix=pickFix(a);
+  $("#fixTitle").textContent=fix.title;
+  $("#fixBody").innerHTML=fix.body;
+  $("#fixDrill").innerHTML="🥎 <b>Drill:</b> "+fix.drill;
+}
+function metric(v,u,k,flag){
+  return `<div class="metric${flag?' flag':''}"><div class="v">${v}<small>${u}</small></div><div class="k">${k}</div></div>`;
+}
+function pickFix(a){
+  if(a.headTravel>6) return {title:"Quiet your head",
+    body:`Your head drifts about <b>${Math.round(a.headTravel)} inches</b> toward the pitcher between load and contact. A moving head moves your eyes and makes timing harder.`,
+    drill:`“Nose over belt button.” Take 10 dry swings keeping your nose stacked over your belt, then re-film.`};
+  if(a.tempoMs>900) return {title:"Quicken your load",
+    body:`Your load-to-contact takes <b>${(a.tempoMs/1000).toFixed(2)}s</b>, on the slow side. A quicker, more compact move buys you more time to read the pitch.`,
+    drill:`Short “1-2” rhythm: small load, then explode. 10 reps focusing on a snappier start.`};
+  return {title:"Lock in your rhythm",
+    body:`Mechanics look balanced and repeatable here. The next gain is consistency — same tempo and finish every swing.`,
+    drill:`Film 5 swings back-to-back and check that tempo and finish stay nearly identical.`};
+}
+function drawKeyframe(sel,i){
+  const c=$(sel); const w=overlay.width,h=overlay.height;
+  c.width=w; c.height=h;
+  const cx=c.getContext("2d");
+  // draw the video frame at sample time, then skeleton
+  const tm=samples[i]?samples[i].t:0;
+  const draw=()=>{
+    cx.drawImage(vid,0,0,w,h);
+    const lm=samples[i]&&samples[i].lm;
+    if(lm){ const d=new DrawingUtils(cx);
+      d.drawConnectors(lm, PoseLandmarker.POSE_CONNECTIONS,{color:"#FFFFFF",lineWidth:3});
+      d.drawLandmarks(lm,{color:"#22d3ee",fillColor:"#C8102E",radius:3,lineWidth:1}); }
+  };
+  const h2=()=>{vid.removeEventListener("seeked",h2);draw();};
+  vid.addEventListener("seeked",h2); vid.currentTime=tm;
+}
+
+// replay with overlay
+$("#replayBtn").onclick=()=>{
+  if(!samples.length) return;
+  vid.currentTime=0; vid.play();
+  const loop=()=>{
+    if(vid.paused||vid.ended){ return; }
+    // nearest sample
+    let i=Math.round(vid.currentTime/(1/30));
+    i=Math.max(0,Math.min(samples.length-1,i));
+    drawOverlayFor(samples[i]?samples[i].lm:null);
+    requestAnimationFrame(loop);
+  };
+  requestAnimationFrame(loop);
+};
+
+$("#againBtn").onclick=()=>{
+  $("#results").classList.add("hidden");
+  file.value=""; analyzeBtn.disabled=true;
+  octx.clearRect(0,0,overlay.width,overlay.height);
+  statusEl.textContent=""; prog.style.width="0%";
+  $("#v-analyze").scrollIntoView();
+};
+</script>
+</body>
+</html>
