@@ -226,19 +226,34 @@ async function ensureModel(){
   statusEl.textContent="Loading pose model… (first time only)";
   const vision=await FilesetResolver.forVisionTasks(
     "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.12/wasm");
-  landmarker=await PoseLandmarker.createFromOptions(vision,{
+  // IMAGE mode = stateless per frame → identical results every run on the same video.
+  const opts=(delegate)=>({
     baseOptions:{
       modelAssetPath:"https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
-      delegate:"GPU"
+      delegate
     },
-    runningMode:"VIDEO", numPoses:1, minPoseDetectionConfidence:0.5, minTrackingConfidence:0.5
+    runningMode:"IMAGE", numPoses:1, minPoseDetectionConfidence:0.5
   });
+  try{ landmarker=await PoseLandmarker.createFromOptions(vision,opts("GPU")); }
+  catch(e){ landmarker=await PoseLandmarker.createFromOptions(vision,opts("CPU")); }
 }
 
 function seek(t){return new Promise(res=>{
-  const h=()=>{vid.removeEventListener("seeked",h);res();};
+  const h=async()=>{
+    vid.removeEventListener("seeked",h);
+    // wait one paint so the decoded frame is actually on the element before we read it
+    await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+    res();
+  };
   vid.addEventListener("seeked",h);
   vid.currentTime=Math.min(t, Math.max(0,vid.duration-0.001));
+});}
+function waitBuffered(){return new Promise(res=>{
+  if(vid.readyState>=4) return res();
+  const h=()=>{ if(vid.readyState>=4){ vid.removeEventListener("canplaythrough",h); res(); } };
+  vid.addEventListener("canplaythrough",h);
+  vid.preload="auto"; try{vid.load();}catch(e){}
+  setTimeout(res, 4000); // safety: don't hang forever
 });}
 
 analyzeBtn.onclick=async()=>{
@@ -247,6 +262,8 @@ analyzeBtn.onclick=async()=>{
     analyzeBtn.disabled=true; progWrap.classList.remove("hidden");
     await ensureModel();
     if(!vid.duration||!isFinite(vid.duration)){ await new Promise(r=>{vid.onloadedmetadata=r;}); }
+    statusEl.textContent="Buffering video…";
+    await waitBuffered();
     // sizing
     const W=Math.min(480, vid.videoWidth||480), scale=W/(vid.videoWidth||480);
     const H=Math.round((vid.videoHeight||854)*scale);
@@ -264,7 +281,7 @@ analyzeBtn.onclick=async()=>{
       await seek(t);
       pctx.drawImage(vid,0,0,W,H);
       let r=null;
-      try{ r=landmarker.detectForVideo(pc, Math.round(t*1000)); }catch(e){ r=null; }
+      try{ r=landmarker.detect(pc); }catch(e){ r=null; }
       const lm=(r&&r.landmarks&&r.landmarks[0])?r.landmarks[0]:null;
       samples.push({t,lm});
       drawOverlayFor(lm);
@@ -336,14 +353,22 @@ function computeAndRender(){
   const torso_px=median(sh.map((s,i)=>dist(s,hip[i])));
   const px2in=TORSO_IN/torso_px;
 
-  // hand speed
-  const spd=hands.map((h,i)=> i===0?0: dist(h,hands[i-1])*px2in*fps);
+  // hand speed (extra-smoothed so detection keys off the swing burst, not a single noisy frame)
+  let spd=hands.map((h,i)=> i===0?0: dist(h,hands[i-1])*px2in*fps);
+  spd=spd.map((_,i)=>{let s=0,c=0;for(let j=Math.max(0,i-1);j<=Math.min(N-1,i+1);j++){s+=spd[j];c++;}return s/c;});
   const g=Math.min(8, Math.floor(N/6));
+  // contact = peak of the dominant burst
   let contact=g, best=-1;
   for(let i=g;i<N-g;i++){ if(spd[i]>best){best=spd[i];contact=i;} }
-  let w0=Math.max(g, contact-Math.round(0.8*fps)), w1=Math.max(w0+1, contact-Math.round(0.1*fps));
-  let load=w0, mn=1e9;
-  for(let i=w0;i<w1;i++){ if(spd[i]<mn){mn=spd[i];load=i;} }
+  // expand the burst around the peak while speed stays above 40% of peak
+  const thr=0.4*best;
+  let bStart=contact, bEnd=contact;
+  while(bStart>g && spd[bStart-1]>=thr) bStart--;
+  while(bEnd<N-g-1 && spd[bEnd+1]>=thr) bEnd++;
+  // load = quietest moment in the ~0.5s just before the burst starts (the launch position)
+  let lw0=Math.max(g, bStart-Math.round(0.5*fps));
+  let load=bStart, mn=1e9;
+  for(let i=lw0;i<=bStart;i++){ if(spd[i]<mn){mn=spd[i];load=i;} }
   let follow=Math.min(N-1, contact+Math.round(0.3*fps));
 
   const headTravel = Math.max(...range(load,contact).map(i=>dist(nose[i],nose[load]))) * px2in;
@@ -393,16 +418,26 @@ function renderResults(){
 function metric(v,u,k,flag){
   return `<div class="metric${flag?' flag':''}"><div class="v">${v}<small>${u}</small></div><div class="k">${k}</div></div>`;
 }
+function clamp01(x){return Math.max(0,Math.min(1,x));}
+// Score each issue 0..1 by severity, then pick the worst. No hard on/off cutoffs → stable advice.
 function pickFix(a){
-  if(a.headTravel>6) return {title:"Quiet your head",
-    body:`Your head drifts about <b>${Math.round(a.headTravel)} inches</b> toward the pitcher between load and contact. A moving head moves your eyes and makes timing harder.`,
-    drill:`“Nose over belt button.” Take 10 dry swings keeping your nose stacked over your belt, then re-film.`};
-  if(a.tempoMs>900) return {title:"Quicken your load",
-    body:`Your load-to-contact takes <b>${(a.tempoMs/1000).toFixed(2)}s</b>, on the slow side. A quicker, more compact move buys you more time to read the pitch.`,
-    drill:`Short “1-2” rhythm: small load, then explode. 10 reps focusing on a snappier start.`};
-  return {title:"Lock in your rhythm",
-    body:`Mechanics look balanced and repeatable here. The next gain is consistency — same tempo and finish every swing.`,
-    drill:`Film 5 swings back-to-back and check that tempo and finish stay nearly identical.`};
+  const issues=[
+    {key:"head", sev:clamp01((a.headTravel-4)/8), build:()=>({title:"Quiet your head",
+      body:`Your head drifts about <b>${Math.round(a.headTravel)} inches</b> toward the pitcher between load and contact. A moving head moves your eyes and makes timing harder.`,
+      drill:`“Nose over belt button.” Take 10 dry swings keeping your nose stacked over your belt, then re-film.`})},
+    {key:"slow", sev:clamp01((a.tempoMs-800)/500), build:()=>({title:"Quicken your load",
+      body:`Your load-to-contact takes <b>${(a.tempoMs/1000).toFixed(2)}s</b>, on the slow side. A quicker, more compact move buys you more time to read the pitch.`,
+      drill:`Short “1-2” rhythm: small load, then explode. 10 reps focusing on a snappier start.`})},
+  ];
+  issues.sort((x,y)=>y.sev-x.sev);
+  const top=issues[0];
+  // require a clear margin before flagging anything, so near-clean swings read as clean
+  if(top.sev<0.2){
+    return {sev:top.sev, ...{title:"Lock in your rhythm",
+      body:`Mechanics look balanced and repeatable here. The next gain is consistency — same tempo and finish every swing.`,
+      drill:`Film 5 swings back-to-back and check that tempo and finish stay nearly identical.`}};
+  }
+  return {sev:top.sev, ...top.build()};
 }
 function drawKeyframe(sel,i){
   const c=$(sel); const w=overlay.width,h=overlay.height;
