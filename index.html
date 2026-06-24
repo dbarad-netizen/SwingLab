@@ -408,7 +408,7 @@ function renderResults(){
     metric(Math.round(a.meanVis*100),"%","Tracking confidence",false)
   ].join("");
 
-  drawKeyframe("#kf0",a.load); drawKeyframe("#kf1",a.contact); drawKeyframe("#kf2",a.follow);
+  drawKeyframes([["#kf0",a.load],["#kf1",a.contact],["#kf2",a.follow]]);
 
   const fix=pickFix(a);
   $("#fixTitle").textContent=fix.title;
@@ -439,21 +439,21 @@ function pickFix(a){
   }
   return {sev:top.sev, ...top.build()};
 }
-function drawKeyframe(sel,i){
-  const c=$(sel); const w=overlay.width,h=overlay.height;
-  c.width=w; c.height=h;
-  const cx=c.getContext("2d");
-  // draw the video frame at sample time, then skeleton
-  const tm=samples[i]?samples[i].t:0;
-  const draw=()=>{
+// Draw the phase frames one at a time (await each seek) so each canvas gets the
+// correct frame — drawing all three at once caused a seek race / wrong frames.
+async function drawKeyframes(list){
+  for(const [sel,i] of list){
+    if(!samples[i]) continue;
+    await seek(samples[i].t);
+    const c=$(sel), w=overlay.width, h=overlay.height;
+    c.width=w; c.height=h;
+    const cx=c.getContext("2d");
     cx.drawImage(vid,0,0,w,h);
-    const lm=samples[i]&&samples[i].lm;
+    const lm=samples[i] && samples[i].lm;
     if(lm){ const d=new DrawingUtils(cx);
       d.drawConnectors(lm, PoseLandmarker.POSE_CONNECTIONS,{color:"#FFFFFF",lineWidth:3});
       d.drawLandmarks(lm,{color:"#22d3ee",fillColor:"#C8102E",radius:3,lineWidth:1}); }
-  };
-  const h2=()=>{vid.removeEventListener("seeked",h2);draw();};
-  vid.addEventListener("seeked",h2); vid.currentTime=tm;
+  }
 }
 
 // replay with overlay
