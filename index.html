@@ -204,14 +204,7 @@
   <!-- SHOP --><div class="view hidden" id="v-shop"></div>
 
   <!-- COACH (overlay view) -->
-  <div class="view hidden" id="v-team">
-    <div class="card"><h3>Coach Diaz · 16U Bandits · 13 players (sample)</h3>
-      <div class="player"><div class="ava">JM</div><div><div class="nm">Jake M.</div><div class="st">Head drift improving</div></div><div class="pchip up">▲ fix working</div></div>
-      <div class="player"><div class="ava">TR</div><div><div class="nm">Tommy R.</div><div class="st">New bat-speed PR</div></div><div class="pchip new">★ PR</div></div>
-      <div class="player"><div class="ava">LC</div><div><div class="nm">Luis C.</div><div class="st">Stride collapsing early</div></div><div class="pchip watch">● watch</div></div>
-      <div class="player"><div class="ava">AS</div><div><div class="nm">Andre S.</div><div class="st">No swings in 5 days</div></div><div class="pchip watch">● nudge</div></div></div>
-    <div class="demoNote">Sample data — the coach dashboard. Tap “Player view” up top to switch back.</div>
-  </div>
+  <div class="view hidden" id="v-team"><div id="teamContent"></div></div>
 
   <div id="authModal" class="hidden" style="position:fixed;inset:0;background:rgba(10,14,20,.6);z-index:60;display:flex;align-items:center;justify-content:center;padding:20px">
     <div style="background:#fff;border-radius:16px;padding:18px;width:100%;max-width:340px">
@@ -317,7 +310,7 @@ function showView(v){
 }
 $("#roleBtn").onclick=()=>{
   const teamHidden=$("#v-team").classList.contains("hidden");
-  if(teamHidden){ showView("team"); $("#roleBtn").textContent="👤 Player view"; document.querySelectorAll(".tab").forEach(x=>x.classList.remove("active")); }
+  if(teamHidden){ showView("team"); renderTeam(); $("#roleBtn").textContent="👤 Player view"; document.querySelectorAll(".tab").forEach(x=>x.classList.remove("active")); }
   else { showView("home"); $("#roleBtn").textContent="👤 Coach view"; document.querySelector('.tab[data-v="home"]').classList.add("active"); }
 };
 
@@ -472,7 +465,8 @@ async function openNotifs(){ if(!ME){ openAuth(); return; }
   $("#notifModal").classList.remove('hidden'); const el=$("#notifList"); el.innerHTML='<div style="color:var(--mut);font-size:13px">Loading…</div>';
   try{ const {data}=await sb.from('notifications').select('*').eq('user_id',ME.id).order('created_at',{ascending:false}).limit(30);
     const list=data||[];
-    el.innerHTML = list.length ? list.map(n=>`<div class="lead"><div class="ava">${n.kind==='crown'?'👑':n.kind==='challenge'?'🔥':'🤝'}</div>
+    const nicon=k=>({crown:'👑',challenge:'🔥',friend:'🤝',drill:'🎯',cheer:'👏',join:'🧢'})[k]||'🔔';
+    el.innerHTML = list.length ? list.map(n=>`<div class="lead"><div class="ava">${nicon(n.kind)}</div>
        <div><div class="nm" style="font-weight:600;font-size:13.5px">${n.body}</div><div class="st">${timeago(n.created_at)}</div></div></div>`).join('')
       : '<div class="empty"><div class="big">🔔</div>No notifications yet.<br>Add friends and start competing.</div>';
     await sb.from('notifications').update({read:true}).eq('user_id',ME.id).eq('read',false); refreshBell();
@@ -840,6 +834,68 @@ $("#saveBtn").onclick=async()=>{ if(!A)return; const kf=$("#kf1"); let thumb="";
       toast("Bat speed synced 🔥"); }
   }catch(e){} }
 };
+
+/* ============ COACH / TEAM HUB ============ */
+async function fetchRoster(teamId){ try{ const {data:tm}=await sb.from('team_members').select('user_id').eq('team_id',teamId);
+  const ids=(tm||[]).map(r=>r.user_id); if(!ids.length)return[];
+  const {data:ps}=await sb.from('profiles').select('id,username,best_bat,swings,best_head').in('id',ids).order('best_bat',{ascending:false,nullsFirst:false}); return ps||[]; }catch(e){ return []; } }
+async function createTeam(){ const name=(prompt('Team name? (e.g., 16U Bandits)')||'').trim(); if(!name)return;
+  const code=Math.random().toString(36).slice(2,7).toUpperCase();
+  try{ const {error}=await sb.from('teams').insert({name,coach_id:ME.id,join_code:code}); if(error)throw error;
+    toast('Team created! Join code '+code+' 🧢'); renderTeam(); }catch(e){ toast('Could not create team'); } }
+async function joinTeam(code){ code=(code||'').trim().toUpperCase(); if(!code)return;
+  try{ const {data:t}=await sb.from('teams').select('id,name,coach_id').eq('join_code',code).maybeSingle();
+    if(!t){ toast('No team with that code'); return; }
+    if(t.coach_id===ME.id){ toast("That's your own team 🙂"); return; }
+    await sb.from('team_members').upsert({team_id:t.id,user_id:ME.id},{onConflict:'team_id,user_id',ignoreDuplicates:true});
+    await notify(t.coach_id,'join',ME.username+' joined '+t.name+' 🧢');
+    toast('Joined '+t.name+'! 🧢'); renderTeam(); }catch(e){ toast('Could not join team'); } }
+async function assignDrill(playerId){
+  const names=DRILLS.map((d,i)=>(i+1)+'. '+d.t).join('\n');
+  const pick=prompt('Assign which drill to this player?\n'+names+'\n\nEnter a number 1–'+DRILLS.length+':');
+  const idx=parseInt(pick)-1; if(isNaN(idx)||!DRILLS[idx])return; const d=DRILLS[idx];
+  try{ const {data:mt}=await sb.from('teams').select('id').eq('coach_id',ME.id).limit(1);
+    const teamId=(mt&&mt[0])?mt[0].id:null;
+    await sb.from('assignments').insert({coach_id:ME.id,player_id:playerId,team_id:teamId,drill:d.t,note:(d.s||'').slice(0,90)});
+    await notify(playerId,'drill','Coach '+ME.username+' assigned you: '+d.t+' 🎯');
+    toast('Assigned '+d.t+' ✅'); }catch(e){ toast('Could not assign'); } }
+async function cheerPlayer(playerId){ try{ await notify(playerId,'cheer','Coach '+ME.username+' cheered you on 👏'); toast('Cheered! 👏'); }catch(e){} }
+async function markAssignmentDone(id){ try{ await sb.from('assignments').update({done:true}).eq('id',id); toast('Nice work! ✅'); renderTeam(); }catch(e){} }
+async function renderTeam(){
+  const el=$("#teamContent"); if(!el)return;
+  if(!ME){ el.innerHTML='<div class="card"><div class="empty"><div class="big">👥</div>Sign in to create a team as a coach, or join your team by code.</div><button class="btn" id="teamSignin">Create account / Sign in</button></div>';
+    const b=$("#teamSignin"); if(b) b.onclick=openAuth; return; }
+  el.innerHTML='<div style="color:var(--mut);font-size:13px;padding:12px">Loading teams…</div>';
+  let coachTeams=[],memTeams=[],asg=[];
+  try{ const r1=await sb.from('teams').select('*').eq('coach_id',ME.id); coachTeams=r1.data||[];
+    const r2=await sb.from('team_members').select('team_id').eq('user_id',ME.id); const mids=(r2.data||[]).map(x=>x.team_id);
+    if(mids.length){ const r3=await sb.from('teams').select('*').in('id',mids); memTeams=(r3.data||[]).filter(t=>t.coach_id!==ME.id); }
+    const r4=await sb.from('assignments').select('*').eq('player_id',ME.id).eq('done',false).order('created_at',{ascending:false}); asg=r4.data||[];
+  }catch(e){}
+  let html='<div class="card"><h3>Team</h3>'
+    +'<button class="ghost" id="createTeamBtn" style="margin-top:0">＋ Create a team (as coach)</button>'
+    +'<div class="ctrls" style="margin-top:8px"><input id="teamCode" placeholder="Enter team join code" autocapitalize="characters" style="flex:1;padding:9px;border:1px solid var(--line);border-radius:9px;text-transform:uppercase"><button class="mini" id="joinTeamBtn">Join</button></div></div>';
+  if(asg.length){ html+='<div class="card"><h3>Your assignments from coach</h3>'
+    +asg.map(a=>`<div class="item"><div class="ic">🎯</div><div><div class="t">${a.drill}</div><div class="s">${a.note||''}</div></div><div class="act"><button class="doBtn" data-asg="${a.id}">Mark done</button></div></div>`).join('')+'</div>'; }
+  for(const t of coachTeams){ const roster=await fetchRoster(t.id);
+    html+=`<div class="card"><h3>${t.name} · you coach</h3><div style="font-size:12.5px;color:var(--mut);margin-bottom:8px">Join code <b>${t.join_code}</b> · ${roster.length} player${roster.length===1?'':'s'}</div>`
+      +(roster.length?roster.map(p=>`<div class="player"><div class="ava">${((p.username||'?')[0]||'?').toUpperCase()}</div>
+        <div><div class="nm">${p.username}</div><div class="st">${p.best_bat?Math.round(p.best_bat)+' mph best':'no bat speed yet'} · ${p.swings||0} swings</div></div>
+        <div style="margin-left:auto;display:flex;gap:6px"><button class="mini" data-assign="${p.id}">Assign</button><button class="mini" data-cheer="${p.id}">👏</button></div></div>`).join('')
+        :`<div style="font-size:13px;color:var(--mut)">No players yet — share join code <b>${t.join_code}</b> with your team.</div>`)+'</div>';
+  }
+  for(const t of memTeams){ const roster=await fetchRoster(t.id);
+    html+=`<div class="card"><h3>${t.name}</h3><div style="font-size:12.5px;color:var(--mut);margin-bottom:8px">${roster.length} players</div>`
+      +roster.map((p,i)=>`<div class="player"><div class="rank" style="width:20px">${i+1}</div><div class="ava">${((p.username||'?')[0]||'?').toUpperCase()}</div><div><div class="nm">${p.username}${p.id===ME.id?' (you)':''}</div><div class="st">${p.best_bat?Math.round(p.best_bat)+' mph':'—'}</div></div></div>`).join('')+'</div>';
+  }
+  if(!coachTeams.length&&!memTeams.length) html+='<div class="demoNote">Create a team to coach a roster, or join one your coach set up.</div>';
+  el.innerHTML=html;
+  const ct=$("#createTeamBtn"); if(ct) ct.onclick=createTeam;
+  const jt=$("#joinTeamBtn"); if(jt) jt.onclick=()=>joinTeam($("#teamCode").value);
+  document.querySelectorAll('[data-asg]').forEach(b=>b.onclick=()=>markAssignmentDone(b.dataset.asg));
+  document.querySelectorAll('[data-assign]').forEach(b=>b.onclick=()=>assignDrill(b.dataset.assign));
+  document.querySelectorAll('[data-cheer]').forEach(b=>b.onclick=()=>cheerPlayer(b.dataset.cheer));
+}
 
 /* ============ DEMO / SYNTHETIC DATA ============ */
 function seedDemo(){
