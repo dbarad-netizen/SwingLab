@@ -137,6 +137,7 @@
   <div class="topbar">
     <div class="logo">Swing<b>Lab</b></div>
     <button class="role" id="roleBtn">👤 Coach view</button>
+    <button class="role" id="acctBtn">Sign in</button>
     <div class="coin" id="coinTop">🪙 0</div>
   </div>
 
@@ -209,6 +210,18 @@
     <div class="demoNote">Sample data — the coach dashboard. Tap “Player view” up top to switch back.</div>
   </div>
 
+  <div id="authModal" class="hidden" style="position:fixed;inset:0;background:rgba(10,14,20,.6);z-index:60;display:flex;align-items:center;justify-content:center;padding:20px">
+    <div style="background:#fff;border-radius:16px;padding:18px;width:100%;max-width:340px">
+      <h3 style="margin:0 0 4px;color:var(--navy);text-transform:none;font-size:17px">Welcome to SwingLab</h3>
+      <div style="font-size:12.5px;color:var(--mut);margin-bottom:12px">Create an account to compete with friends. No email needed — just a username.</div>
+      <input id="authUser" placeholder="Username" autocomplete="off" autocapitalize="none" style="width:100%;padding:11px;border:1px solid var(--line);border-radius:10px;margin-bottom:8px">
+      <input id="authPass" type="password" placeholder="Password (6+ characters)" style="width:100%;padding:11px;border:1px solid var(--line);border-radius:10px;margin-bottom:4px">
+      <div id="authErr" class="err" style="min-height:16px"></div>
+      <button class="btn" id="authSignup" style="margin-top:2px">Create account</button>
+      <button class="ghost" id="authLogin">I already have an account</button>
+      <button class="clear" id="authClose" style="display:block;margin:10px auto 0">Cancel</button>
+    </div>
+  </div>
   <div id="toast"></div>
   <div class="tabs">
     <div class="tab active" data-v="home"><span class="ic">🏠</span>Home</div>
@@ -222,6 +235,11 @@
 <script type="module">
 import { PoseLandmarker, FilesetResolver, DrawingUtils }
   from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.12";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+const SB_URL="https://esoqooponmvcclxdxxtv.supabase.co";
+const SB_KEY="sb_publishable_bAAS4TB-pnPw6M409j88Ug_oLiHCJC1";
+const sb=createClient(SB_URL,SB_KEY);
+let ME=null;
 const $=s=>document.querySelector(s);
 const file=$("#file"),analyzeBtn=$("#analyzeBtn"),vid=$("#vid"),overlay=$("#overlay");
 const statusEl=$("#status"),errEl=$("#err"),prog=$("#prog"),progWrap=$("#progWrap");
@@ -356,28 +374,109 @@ function renderAcademy(){
   });
 }
 
-/* ============ COMPETE ============ */
-const LEADERS=[["Mia R.",3120],["Coach's Pick",2740],["Diego S.",2210],["Sam T.",1680],["Ava L.",1240]];
-function renderCompete(){
-  const p=getProfile(); const h=getHistory();
-  const wk=h.filter(r=>Date.now()-r.id<7*86400000).length; const goal=3; const pct=Math.min(100,Math.round(100*wk/goal));
-  const board=LEADERS.concat([["You",p.xp]]).sort((a,b)=>b[1]-a[1]);
-  const boardHtml=board.map((r,i)=>`<div class="lead ${r[0]==='You'?'me':''}"><div class="rank">${i+1}</div>
-     <div class="ava">${r[0]==='You'?'🦅':r[0][0]}</div><div class="nm">${r[0]}</div><div class="xp">${r[1]} XP</div></div>`).join("");
+/* ============ ACCOUNTS (Supabase) ============ */
+const uemail=u=>u.toLowerCase().replace(/[^a-z0-9_]/g,"")+"@swinglab.app";
+function openAuth(){ $("#authErr").textContent=""; $("#authUser").value=""; $("#authPass").value=""; $("#authModal").classList.remove("hidden"); }
+function closeAuth(){ $("#authModal").classList.add("hidden"); }
+function updateAccountUI(){ const b=$("#acctBtn"); if(b) b.textContent = ME ? ("👤 "+ME.username) : "Sign in"; }
+async function loadMe(){ try{ const {data:{session}}=await sb.auth.getSession(); if(!session){ME=null;return;}
+  const {data}=await sb.from("profiles").select("*").eq("id",session.user.id).maybeSingle();
+  ME=data||{id:session.user.id,username:"player",friend_code:"?"}; }catch(e){ ME=null; } }
+function localBestBat(){ let m=null; for(const r of getHistory()){ if(r.batMph!=null) m=Math.max(m||0,r.batMph); } return m; }
+async function pushLocalToCloud(){ if(!ME)return; try{ const p=getProfile(), lb=localBestBat();
+  const patch={ xp:Math.max(ME.xp||0,p.xp||0), swings:Math.max(ME.swings||0,p.swings||0), streak:Math.max(ME.streak||0,p.streak||0),
+    best_head:(ME.best_head==null)?p.bestHead:(p.bestHead==null?ME.best_head:Math.min(ME.best_head,p.bestHead)),
+    best_bat:(ME.best_bat==null)?lb:(lb==null?ME.best_bat:Math.max(ME.best_bat,lb)) };
+  const {data}=await sb.from("profiles").update(patch).eq("id",ME.id).select().maybeSingle(); if(data) ME=data; }catch(e){} }
+async function doAuth(mode){ const u=$("#authUser").value.trim(), p=$("#authPass").value, err=$("#authErr"); err.textContent="";
+  if(u.length<2){ err.textContent="Pick a username (2+ characters)."; return; }
+  if(p.length<6){ err.textContent="Password must be 6+ characters."; return; }
+  const email=uemail(u);
+  try{
+    if(mode==="signup"){ const {error}=await sb.auth.signUp({email,password:p,options:{data:{username:u}}});
+      if(error && !/already/i.test(error.message)) throw error;
+      const {error:e2}=await sb.auth.signInWithPassword({email,password:p}); if(e2) throw e2; }
+    else { const {error}=await sb.auth.signInWithPassword({email,password:p}); if(error) throw error; }
+    closeAuth(); await loadMe(); updateAccountUI(); renderCompete(); toast("Signed in as "+(ME?ME.username:u));
+  }catch(e){ err.textContent=(e&&e.message)?e.message:"Something went wrong."; }
+}
+async function logout(){ try{ await sb.auth.signOut(); }catch(e){} ME=null; updateAccountUI(); renderCompete(); toast("Signed out"); }
+function initAccountUI(){
+  $("#acctBtn").onclick=()=>{ if(ME){ if(confirm("Sign out of "+ME.username+"?")) logout(); } else openAuth(); };
+  $("#authSignup").onclick=()=>doAuth("signup"); $("#authLogin").onclick=()=>doAuth("login"); $("#authClose").onclick=closeAuth;
+}
+
+/* ============ SOCIAL DATA ============ */
+async function fetchGlobal(){ try{ const {data}=await sb.from("profiles").select("id,username,best_bat,xp").order("best_bat",{ascending:false,nullsFirst:false}).limit(50); return data||[]; }catch(e){ return []; } }
+async function fetchFriends(){ if(!ME)return[]; try{ const {data:fr}=await sb.from("friendships").select("friend_id").eq("user_id",ME.id);
+  const ids=(fr||[]).map(r=>r.friend_id).concat(ME.id);
+  const {data}=await sb.from("profiles").select("id,username,best_bat,xp").in("id",ids).order("best_bat",{ascending:false,nullsFirst:false}); return data||[]; }catch(e){ return []; } }
+async function addFriend(code){ if(!ME)return; code=(code||"").trim().toUpperCase(); if(!code)return;
+  try{ const {data:fp}=await sb.from("profiles").select("id,username").eq("friend_code",code).maybeSingle();
+    if(!fp){ toast("No player with that code"); return; }
+    if(fp.id===ME.id){ toast("That's your own code 🙂"); return; }
+    await sb.from("friendships").upsert([{user_id:ME.id,friend_id:fp.id},{user_id:fp.id,friend_id:ME.id}],{onConflict:"user_id,friend_id",ignoreDuplicates:true});
+    toast("Added "+fp.username+" 🤝"); renderCompete(); }catch(e){ toast("Couldn't add friend"); } }
+async function challengeFriend(friendId){ if(!ME)return; if(ME.best_bat==null){ toast("Record a bat speed first (Slo-Mo swing)"); return; }
+  try{ await sb.from("challenges").insert({from_user:ME.id,to_user:friendId,metric:"bat_mph",target:ME.best_bat,message:"Beat my "+Math.round(ME.best_bat)+" mph!"});
+    toast("Challenge sent! 🔥"); }catch(e){ toast("Couldn't send challenge"); } }
+async function fetchChallenges(){ if(!ME)return[]; try{ const {data}=await sb.from("challenges").select("id,target,message,status,from_user").eq("to_user",ME.id).order("created_at",{ascending:false}).limit(20);
+  const list=data||[]; const ids=[...new Set(list.map(c=>c.from_user))]; let names={};
+  if(ids.length){ const {data:ps}=await sb.from("profiles").select("id,username").in("id",ids); (ps||[]).forEach(x=>names[x.id]=x.username); }
+  return list.map(c=>({...c,fromName:names[c.from_user]||"player"})); }catch(e){ return []; } }
+
+/* ============ COMPETE (cloud-aware) ============ */
+let boardMode="friends";
+function weekKey(){const d=new Date();const o=new Date(d.getFullYear(),0,1);return d.getFullYear()+"-"+Math.ceil(((d-o)/86400000+o.getDay()+1)/7);}
+async function renderCompete(){
+  const el=$("#v-compete"); const p=getProfile();
+  const h=getHistory(); const wk=h.filter(r=>Date.now()-r.id<7*86400000).length; const goal=3; const pct=Math.min(100,Math.round(100*wk/goal));
   const badgeHtml=BADGES.map(b=>`<div class="bdg ${p.badges.includes(b.id)?'on':'lock'}"><div class="em">${p.badges.includes(b.id)?b.em:'🔒'}</div>${b.name}</div>`).join("");
-  $("#v-compete").innerHTML=`
-    <div class="card"><h3>Weekly challenge</h3>
+  const weekly=`<div class="card"><h3>Weekly challenge</h3>
       <div class="mission"><div class="ic">🏁</div><div><div class="t">Log 3 swings this week</div>
         <div class="s">${wk} / ${goal} done · reward 150 XP</div></div></div>
       <div class="bar" style="margin-top:10px"><i style="width:${pct}%;background:linear-gradient(90deg,#ffd35b,#E5A100)"></i></div>
-      ${wk>=goal?'<button class="save" id="claimBtn">Claim 150 XP 🎉</button>':''}</div>
-    <div class="card"><h3>Leaderboard</h3>${boardHtml}<div class="demoNote">Other players are sample data for now.</div></div>
-    <div class="card"><h3>Achievements</h3><div class="badgesRow">${badgeHtml}</div></div>`;
-  const cb=$("#claimBtn"); if(cb) cb.onclick=()=>{ const p2=getProfile();
-    if(p2._wkClaim===weekKey()){ toast("Already claimed this week"); return; }
-    p2._wkClaim=weekKey(); setProfile(p2); award(p2,150,"weekly challenge"); renderCompete(); };
+      ${wk>=goal?'<button class="save" id="claimBtn">Claim 150 XP 🎉</button>':''}</div>`;
+  const achievements=`<div class="card"><h3>Achievements</h3><div class="badgesRow">${badgeHtml}</div></div>`;
+  if(!ME){
+    el.innerHTML=`<div class="card"><h3>Compete</h3>
+      <div class="empty"><div class="big">🏆</div>Sign in to climb the leaderboard, add friends, and trade challenges.</div>
+      <button class="btn" id="ctaSignin">Create account / Sign in</button></div>`+weekly+achievements;
+    const c=$("#ctaSignin"); if(c) c.onclick=openAuth; wireWeekly(); return;
+  }
+  el.innerHTML=`
+    <div class="card"><h3>Your player card</h3>
+      <div class="mission"><div class="ic">🦅</div><div><div class="t">${ME.username}</div>
+        <div class="s">Friend code <b>${ME.friend_code}</b> · ${ME.best_bat?Math.round(ME.best_bat)+" mph best":"no bat speed yet"}</div></div></div>
+      <div class="ctrls"><input id="friendCode" placeholder="Enter a friend's code" autocapitalize="characters" style="flex:1;padding:9px;border:1px solid var(--line);border-radius:9px;text-transform:uppercase">
+        <button class="mini" id="addFriendBtn">Add</button></div></div>
+    <div class="card"><h3>Leaderboard — bat speed</h3>
+      <div class="chips"><button class="chip ${boardMode==='friends'?'on':''}" data-m="friends">Friends</button><button class="chip ${boardMode==='global'?'on':''}" data-m="global">Global</button></div>
+      <div id="boardList" style="margin-top:8px"><div style="color:var(--mut);font-size:13px">Loading…</div></div></div>
+    <div class="card"><h3>Challenges</h3><div id="challList"><div style="color:var(--mut);font-size:13px">Loading…</div></div></div>`
+    +weekly+achievements;
+  $("#addFriendBtn").onclick=()=>addFriend($("#friendCode").value);
+  document.querySelectorAll("#v-compete .chip[data-m]").forEach(c=>c.onclick=()=>{ boardMode=c.dataset.m; renderBoard(); document.querySelectorAll("#v-compete .chip[data-m]").forEach(x=>x.classList.toggle("on",x.dataset.m===boardMode)); });
+  wireWeekly(); renderBoard(); renderChallenges();
 }
-function weekKey(){const d=new Date();const o=new Date(d.getFullYear(),0,1);return d.getFullYear()+"-"+Math.ceil(((d-o)/86400000+o.getDay()+1)/7);}
+function wireWeekly(){ const cb=$("#claimBtn"); if(cb) cb.onclick=()=>{ const p2=getProfile();
+  if(p2._wkClaim===weekKey()){ toast("Already claimed this week"); return; }
+  p2._wkClaim=weekKey(); setProfile(p2); award(p2,150,"weekly challenge"); renderCompete(); }; }
+async function renderBoard(){ const el=$("#boardList"); if(!el)return;
+  const rows= boardMode==="global"? await fetchGlobal() : await fetchFriends();
+  el.innerHTML = rows.length ? rows.map((r,i)=>`<div class="lead ${r.id===ME.id?'me':''}"><div class="rank">${i+1}</div>
+     <div class="ava">${r.id===ME.id?'🦅':((r.username||'?')[0]||'?').toUpperCase()}</div><div class="nm">${r.username||'player'}</div>
+     <div class="xp">${r.best_bat?Math.round(r.best_bat)+' mph':'—'}</div>
+     ${(r.id!==ME.id&&boardMode==='friends')?`<button class="mini" style="margin-left:8px" data-ch="${r.id}">Challenge</button>`:''}</div>`).join("")
+    : `<div style="color:var(--mut);font-size:13px">${boardMode==='friends'?'Add a friend by code to see them here.':'No players ranked yet — be the first!'}</div>`;
+  document.querySelectorAll("#boardList [data-ch]").forEach(b=>b.onclick=()=>challengeFriend(b.dataset.ch));
+}
+async function renderChallenges(){ const el=$("#challList"); if(!el)return; const list=await fetchChallenges();
+  el.innerHTML = list.length ? list.map(c=>`<div class="lead"><div class="ava">${((c.fromName||'?')[0]||'?').toUpperCase()}</div>
+     <div><div class="nm">${c.fromName}</div><div class="st">${c.message||('Beat '+Math.round(c.target)+' mph')}</div></div>
+     <div class="xp" style="color:${c.status==='beaten'?'var(--good)':'var(--red)'}">${c.status==='beaten'?'✓ beaten':Math.round(c.target)+' mph'}</div></div>`).join("")
+    : `<div style="color:var(--mut);font-size:13px">No challenges yet. Add friends, then tap “Challenge” on the leaderboard.</div>`;
+}
 
 /* ============ SHOP ============ */
 const PRODUCTS=[
@@ -641,7 +740,7 @@ $("#againBtn").onclick=()=>{ $("#results").classList.add("hidden"); file.value="
 /* history + save (now awards XP/coins) */
 function getHistory(){try{return JSON.parse(localStorage.getItem(HKEY)||"[]");}catch(e){return[];}}
 function setHistory(h){try{localStorage.setItem(HKEY,JSON.stringify(h));}catch(e){}}
-$("#saveBtn").onclick=()=>{ if(!A)return; const kf=$("#kf1"); let thumb="";
+$("#saveBtn").onclick=async()=>{ if(!A)return; const kf=$("#kf1"); let thumb="";
   try{const tc=document.createElement("canvas");tc.width=120;tc.height=Math.round(120*kf.height/kf.width);
     tc.getContext("2d").drawImage(kf,0,0,tc.width,tc.height);thumb=tc.toDataURL("image/jpeg",0.6);}catch(e){}
   const head=Math.round(A.headTravel);
@@ -655,7 +754,15 @@ $("#saveBtn").onclick=()=>{ if(!A)return; const kf=$("#kf1"); let thumb="";
   if(p.bestHead==null||head<p.bestHead){ p.bestHead=head; xp+=100; reason="new personal best!"; }
   else { p.bestHead=Math.min(p.bestHead,head); }
   setProfile(p); award(p, xp+bonus, reason);
-  const sb=$("#saveBtn"); sb.className="save done"; sb.textContent="✓ Saved · +"+(xp+bonus)+" XP"; sb.disabled=true;
+  const sbtn=$("#saveBtn"); sbtn.className="save done"; sbtn.textContent="✓ Saved · +"+(xp+bonus)+" XP"; sbtn.disabled=true;
+  if(ME){ try{
+    const bat=(A.bat&&A.bat.status==="ok")?A.bat.mph:null;
+    await sb.from("swings").insert({user_id:ME.id,score:rec.score,head:rec.head,tempo:rec.tempo,stride:rec.stride,bat_mph:bat,fix:rec.fix});
+    const patch={ swings:(ME.swings||0)+1, xp:(ME.xp||0)+xp+bonus, best_head:(ME.best_head==null)?head:Math.min(ME.best_head,head) };
+    if(bat!=null) patch.best_bat=Math.max(ME.best_bat||0,bat);
+    const {data}=await sb.from("profiles").update(patch).eq("id",ME.id).select().maybeSingle(); if(data) ME=data;
+    if(bat!=null){ await sb.from("challenges").update({status:"beaten"}).eq("to_user",ME.id).eq("status","open").lte("target",bat); toast("Bat speed synced 🔥"); }
+  }catch(e){} }
 };
 
 /* ============ DEMO / SYNTHETIC DATA ============ */
@@ -677,6 +784,9 @@ function hasData(){ try{ return !!localStorage.getItem(PKEY) || getHistory().len
 if(!hasData()) seedDemo();
 $("#coinTop").textContent="🪙 "+getProfile().coins;
 renderHome();
+initAccountUI();
+sb.auth.getSession().then(async ({data})=>{ if(data&&data.session){ await loadMe(); updateAccountUI(); } });
+sb.auth.onAuthStateChange((_e,session)=>{ if(!session){ ME=null; updateAccountUI(); } });
 </script>
 </body>
 </html>
