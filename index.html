@@ -997,9 +997,10 @@ function renderCompareBest(){ const card=$("#compareCard"); if(!card)return; con
   if(!any){ card.classList.add("hidden"); return; }
   const cur={bat:(A.bat&&A.bat.status==="ok")?A.bat.mph:null,score:score(),head:Math.round(A.headTravel),tempo:+(A.tempoMs/1000).toFixed(2)};
   const drow=(lab,c,r,better)=>{ if(c==null||r==null)return''; const d=+(c-r).toFixed(2); const good=better==="up"?d>0:d<0;
-    const cls=d===0?'':(good?'delta good':'delta bad'),sign=d>0?'+':''; return `<div>${lab}</div><div>${r}</div><div class="${cls}">${c} <small>(${sign}${d})</small></div>`; };
-  $("#cmpDeltas").innerHTML=`<div class="cmp"><div class="hd">Metric</div><div class="hd">Best</div><div class="hd">This</div>`
-    +drow("Bat speed (mph)",cur.bat,ref.bat,"up")+drow("Head drift (in)",cur.head,ref.head,"down")+drow("Tempo (s)",cur.tempo,ref.tempo,"down")+drow("Score",cur.score,ref.score,"up")+`</div>`
+    const cls=d===0?'':(good?'delta good':'delta bad'),sign=d>0?'+':'';
+    return `<div style="display:flex;align-items:center;padding:6px 2px;border-bottom:1px solid var(--line);font-size:13px"><div style="flex:1;color:var(--mut)">${lab}</div><div style="text-align:right"><span style="color:#8ea0b8">${r}</span> → <b>${c}</b> <span class="${cls}">(${sign}${d})</span></div></div>`; };
+  $("#cmpDeltas").innerHTML=`<div style="font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px">Your best → this swing</div>`
+    +drow("Bat speed (mph)",cur.bat,ref.bat,"up")+drow("Head drift (in)",cur.head,ref.head,"down")+drow("Tempo (s)",cur.tempo,ref.tempo,"down")+drow("Score",cur.score,ref.score,"up")
     +`<div class="demoNote">Skeletons aligned at the hips to compare posture &amp; path. Film from a similar angle for the cleanest overlay.</div>`;
   card.classList.remove("hidden"); }
 
