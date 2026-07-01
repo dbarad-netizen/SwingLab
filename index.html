@@ -139,6 +139,7 @@
     <div class="logo">Swing<b>Lab</b></div>
     <button class="role" id="roleBtn">👤 Coach view</button>
     <button class="role" id="acctBtn">Sign in</button>
+    <button class="role" id="bellBtn" style="position:relative;padding:4px 8px">🔔<span id="bellDot" class="hidden" style="position:absolute;top:-3px;right:-3px;background:#C8102E;color:#fff;border-radius:10px;font-size:10px;line-height:1.4;min-width:16px;text-align:center;padding:0 3px;font-weight:800"></span></button>
     <div class="coin" id="coinTop">🪙 0</div>
   </div>
 
@@ -224,6 +225,13 @@
       <button class="clear" id="authClose" style="display:block;margin:10px auto 0">Cancel</button>
     </div>
   </div>
+  <div id="notifModal" class="hidden" style="position:fixed;inset:0;background:rgba(8,12,18,.6);z-index:80;display:flex;align-items:flex-start;justify-content:center;padding:64px 14px">
+    <div style="background:#fff;border-radius:16px;padding:14px;width:100%;max-width:400px;max-height:80vh;overflow-y:auto">
+      <div style="display:flex;align-items:center;margin-bottom:8px"><h3 style="margin:0;text-transform:none;color:var(--navy);font-size:16px">🔔 Notifications</h3>
+        <button class="clear" id="notifClose" style="margin-left:auto">Close</button></div>
+      <div id="notifList"></div>
+    </div>
+  </div>
   <div id="shareModal" class="hidden" style="position:fixed;inset:0;background:rgba(8,12,18,.85);z-index:80;display:flex;align-items:center;justify-content:center;padding:16px;flex-direction:column">
     <img id="shareImg" alt="Your highlight card" style="width:340px;max-width:86vw;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.6)"/>
     <div style="display:flex;gap:10px;margin-top:14px">
@@ -250,6 +258,7 @@ const SB_URL="https://esoqooponmvcclxdxxtv.supabase.co";
 const SB_KEY="sb_publishable_bAAS4TB-pnPw6M409j88Ug_oLiHCJC1";
 const sb=createClient(SB_URL,SB_KEY);
 let ME=null;
+let CAL=0.8;  // camera->realistic bat-speed factor; self-improves from logged sensor pairs
 const $=s=>document.querySelector(s);
 const file=$("#file"),analyzeBtn=$("#analyzeBtn"),vid=$("#vid"),overlay=$("#overlay");
 const statusEl=$("#status"),errEl=$("#err"),prog=$("#prog"),progWrap=$("#progWrap");
@@ -407,16 +416,18 @@ async function doAuth(mode){ const u=$("#authUser").value.trim(), p=$("#authPass
       if(error && !/already/i.test(error.message)) throw error;
       const {error:e2}=await sb.auth.signInWithPassword({email,password:p}); if(e2) throw e2; }
     else { const {error}=await sb.auth.signInWithPassword({email,password:p}); if(error) throw error; }
-    closeAuth(); await loadMe(); updateAccountUI(); renderCompete(); toast("Signed in as "+(ME?ME.username:u));
+    closeAuth(); await loadMe(); updateAccountUI(); renderCompete(); refreshBell(); fetchCal(); toast("Signed in as "+(ME?ME.username:u));
   }catch(e){ err.textContent=(e&&e.message)?e.message:"Something went wrong."; }
 }
-async function logout(){ try{ await sb.auth.signOut(); }catch(e){} ME=null; updateAccountUI(); renderCompete(); toast("Signed out"); }
+async function logout(){ try{ await sb.auth.signOut(); }catch(e){} ME=null; updateAccountUI(); renderCompete(); refreshBell(); toast("Signed out"); }
 function initAccountUI(){
   $("#acctBtn").onclick=()=>{ if(ME){ if(confirm("Sign out of "+ME.username+"?")) logout(); } else openAuth(); };
   $("#authSignup").onclick=()=>doAuth("signup"); $("#authLogin").onclick=()=>doAuth("login"); $("#authClose").onclick=closeAuth;
   const shb=$("#shareBtn"); if(shb) shb.onclick=()=>openSharePreview();
   const sd=$("#shareDo"); if(sd) sd.onclick=()=>doShare();
   const sc=$("#shareClose"); if(sc) sc.onclick=()=>closeShare();
+  const bb=$("#bellBtn"); if(bb) bb.onclick=()=>openNotifs();
+  const nc=$("#notifClose"); if(nc) nc.onclick=()=>closeNotifs();
 }
 
 /* ============ SOCIAL DATA ============ */
@@ -429,14 +440,44 @@ async function addFriend(code){ if(!ME)return; code=(code||"").trim().toUpperCas
     if(!fp){ toast("No player with that code"); return; }
     if(fp.id===ME.id){ toast("That's your own code 🙂"); return; }
     await sb.from("friendships").upsert([{user_id:ME.id,friend_id:fp.id},{user_id:fp.id,friend_id:ME.id}],{onConflict:"user_id,friend_id",ignoreDuplicates:true});
+    await notify(fp.id,'friend',ME.username+' added you as a friend 🤝');
     toast("Added "+fp.username+" 🤝"); renderCompete(); }catch(e){ toast("Couldn't add friend"); } }
 async function challengeFriend(friendId){ if(!ME)return; if(ME.best_bat==null){ toast("Record a bat speed first (Slo-Mo swing)"); return; }
   try{ await sb.from("challenges").insert({from_user:ME.id,to_user:friendId,metric:"bat_mph",target:ME.best_bat,message:"Beat my "+Math.round(ME.best_bat)+" mph!"});
+    await notify(friendId,'challenge',ME.username+' challenged you to beat '+Math.round(ME.best_bat)+' mph! 🔥');
     toast("Challenge sent! 🔥"); }catch(e){ toast("Couldn't send challenge"); } }
 async function fetchChallenges(){ if(!ME)return[]; try{ const {data}=await sb.from("challenges").select("id,target,message,status,from_user").eq("to_user",ME.id).order("created_at",{ascending:false}).limit(20);
   const list=data||[]; const ids=[...new Set(list.map(c=>c.from_user))]; let names={};
   if(ids.length){ const {data:ps}=await sb.from("profiles").select("id,username").in("id",ids); (ps||[]).forEach(x=>names[x.id]=x.username); }
   return list.map(c=>({...c,fromName:names[c.from_user]||"player"})); }catch(e){ return []; } }
+
+/* ============ CALIBRATION ============ */
+async function fetchCal(){ try{ const {data}=await sb.from('bat_calibrations').select('camera_mph,sensor_mph').limit(300);
+  if(data&&data.length>=4){ const r=data.filter(d=>d.camera_mph>0).map(d=>d.sensor_mph/d.camera_mph).sort((a,b)=>a-b);
+    const med=r[Math.floor(r.length/2)]; if(isFinite(med)) CAL=Math.max(0.5,Math.min(1.2,med)); } }catch(e){} }
+async function logCalibration(){ if(!ME){ openAuth(); return; }
+  if(!A||!A.bat||A.bat.status!=='ok'){ toast('Analyze a Slo-Mo swing first'); return; }
+  const v=prompt('Your real bat speed from a sensor (Blast, Diamond Kinetics, etc.), in mph:');
+  if(v==null) return; const n=parseFloat(v); if(!(n>=10&&n<=120)){ toast('Enter a number between 10 and 120'); return; }
+  try{ await sb.from('bat_calibrations').insert({user_id:ME.id,camera_mph:A.bat.mphRaw||A.bat.mph,sensor_mph:n});
+    toast('Thanks! Calibration logged 🎯'); await fetchCal(); }catch(e){ toast('Could not save'); } }
+
+/* ============ NOTIFICATIONS ============ */
+function timeago(ts){ const s=(Date.now()-new Date(ts).getTime())/1000; if(s<60)return'just now'; if(s<3600)return Math.floor(s/60)+'m ago'; if(s<86400)return Math.floor(s/3600)+'h ago'; return Math.floor(s/86400)+'d ago'; }
+async function notify(recipientId, kind, body){ if(!ME||recipientId===ME.id)return; try{ await sb.from('notifications').insert({user_id:recipientId,actor_id:ME.id,actor_name:ME.username,kind,body}); }catch(e){} }
+async function refreshBell(){ const dot=$("#bellDot"); if(!dot)return; if(!ME){ dot.classList.add('hidden'); return; }
+  try{ const {count}=await sb.from('notifications').select('*',{count:'exact',head:true}).eq('user_id',ME.id).eq('read',false);
+    if(count&&count>0){ dot.textContent=count>9?'9+':count; dot.classList.remove('hidden'); } else dot.classList.add('hidden'); }catch(e){} }
+async function openNotifs(){ if(!ME){ openAuth(); return; }
+  $("#notifModal").classList.remove('hidden'); const el=$("#notifList"); el.innerHTML='<div style="color:var(--mut);font-size:13px">Loading…</div>';
+  try{ const {data}=await sb.from('notifications').select('*').eq('user_id',ME.id).order('created_at',{ascending:false}).limit(30);
+    const list=data||[];
+    el.innerHTML = list.length ? list.map(n=>`<div class="lead"><div class="ava">${n.kind==='crown'?'👑':n.kind==='challenge'?'🔥':'🤝'}</div>
+       <div><div class="nm" style="font-weight:600;font-size:13.5px">${n.body}</div><div class="st">${timeago(n.created_at)}</div></div></div>`).join('')
+      : '<div class="empty"><div class="big">🔔</div>No notifications yet.<br>Add friends and start competing.</div>';
+    await sb.from('notifications').update({read:true}).eq('user_id',ME.id).eq('read',false); refreshBell();
+  }catch(e){ el.innerHTML='<div style="color:var(--mut);font-size:13px">Could not load notifications.</div>'; } }
+function closeNotifs(){ $("#notifModal").classList.add('hidden'); }
 
 /* ============ COMPETE (cloud-aware) ============ */
 let boardMode="friends";
@@ -678,7 +719,9 @@ function renderBatCard(){ const el=$("#batBody"); if(!el)return; if(!A||!A.bat){
   if(b.status==="ok"){ const pct=Math.min(100,b.mph);
     el.innerHTML='<div class="scoreRow"><div class="ring" style="background:conic-gradient(#E5A100 '+pct+'%, #e9edf2 0)"><i>'+b.mph+'</i></div>'
     +'<div class="lab">Peak bat speed<b>'+b.mph+' mph</b><span style="font-size:12px;color:var(--mut)">camera estimate · beta</span></div></div>'
-    +'<div style="font-size:11.5px;color:var(--mut);margin-top:8px">Estimated from the bat’s motion — no sensor needed. Precision improves with higher frame rates; not yet sensor-calibrated.</div>'; return; }
+    +'<div style="font-size:11.5px;color:var(--mut);margin-top:8px">Estimated from the bat’s motion — no sensor needed. Camera estimates are calibrated toward real bat speed and improve as players log sensor readings.</div>'
+    +(ME?'<div style="margin-top:6px"><button class="clear" id="calBtn">🎯 Have a bat sensor? Log your real reading to calibrate</button></div>':'');
+    const cb=$("#calBtn"); if(cb) cb.onclick=logCalibration; return; }
   if(b.status==="weak"){ el.innerHTML='<div style="font-size:12.5px;color:var(--mut)">No clear swing to measure bat speed on this clip.</div>'; return; }
   el.innerHTML='<div style="font-size:12.5px;color:var(--mut)">Couldn’t estimate bat speed on this clip.</div>'; }
 
@@ -738,11 +781,12 @@ async function estimateBat(){
     const sm=sp.map((_,i)=>{let a=0,c=0;for(let j=Math.max(0,i-1);j<=Math.min(sp.length-1,i+1);j++){a+=sp[j];c++;}return a/c;});
     // robust peak: 3rd-highest smoothed speed rejects one or two erratic tip spikes
     const sorted=sm.slice().sort((a,b)=>b-a);
-    let peak=sorted[Math.min(2,sorted.length-1)]||0;
+    let rawPeak=sorted[Math.min(2,sorted.length-1)]||0;
+    let peak=rawPeak*CAL;   // apply calibration factor
     if(peak<8){ A.bat={status:"weak"}; renderBatCard(); return; }
     if(peak>150) peak=150;
     let near=rec[0],nd=1e9; for(const r of rec){ const q=Math.abs(r.t-tC); if(q<nd){nd=q;near=r;} }
-    A.bat={status:"ok",mph:Math.round(peak),tipN:[near.tip[0]/bw,near.tip[1]/bh],handN:[near.hand[0]/bw,near.hand[1]/bh]};
+    A.bat={status:"ok",mph:Math.round(peak),mphRaw:Math.round(rawPeak),tipN:[near.tip[0]/bw,near.tip[1]/bh],handN:[near.hand[0]/bw,near.hand[1]/bh]};
     renderBatCard(); try{ await drawKeyframes([["#kf1",A.contact]]); }catch(e){}
   }catch(e){ A.bat={status:"unavailable"}; renderBatCard(); }
 }
@@ -788,7 +832,12 @@ $("#saveBtn").onclick=async()=>{ if(!A)return; const kf=$("#kf1"); let thumb="";
     const patch={ swings:(ME.swings||0)+1, xp:(ME.xp||0)+xp+bonus, best_head:(ME.best_head==null)?head:Math.min(ME.best_head,head) };
     if(bat!=null) patch.best_bat=Math.max(ME.best_bat||0,bat);
     const {data}=await sb.from("profiles").update(patch).eq("id",ME.id).select().maybeSingle(); if(data) ME=data;
-    if(bat!=null){ await sb.from("challenges").update({status:"beaten"}).eq("to_user",ME.id).eq("status","open").lte("target",bat); toast("Bat speed synced 🔥"); }
+    if(bat!=null){ await sb.from("challenges").update({status:"beaten"}).eq("to_user",ME.id).eq("status","open").lte("target",bat);
+      try{ const {data:fr}=await sb.from("friendships").select("friend_id").eq("user_id",ME.id);
+        const fids=(fr||[]).map(r=>r.friend_id);
+        if(fids.length){ const {data:fps}=await sb.from("profiles").select("id,best_bat").in("id",fids);
+          for(const f of (fps||[])){ if(f.best_bat!=null && f.best_bat<bat && f.best_bat>=(prevBat||0)) await notify(f.id,'crown',ME.username+' just hit '+bat+' mph — your bat-speed crown is under threat! 👑'); } } }catch(e){}
+      toast("Bat speed synced 🔥"); }
   }catch(e){} }
 };
 
@@ -863,7 +912,7 @@ if(!hasData()) seedDemo();
 $("#coinTop").textContent="🪙 "+getProfile().coins;
 renderHome();
 initAccountUI();
-sb.auth.getSession().then(async ({data})=>{ if(data&&data.session){ await loadMe(); updateAccountUI(); } });
+sb.auth.getSession().then(async ({data})=>{ if(data&&data.session){ await loadMe(); updateAccountUI(); refreshBell(); fetchCal(); } });
 sb.auth.onAuthStateChange((_e,session)=>{ if(!session){ ME=null; updateAccountUI(); } });
 </script>
 </body>
