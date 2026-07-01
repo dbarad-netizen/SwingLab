@@ -178,6 +178,7 @@
         <div class="chips" id="swingChips"></div></div>
       <div class="card"><h3>What we measured <span style="text-transform:none;color:#9aa6b4;font-weight:600">· tap to learn</span></h3>
         <div class="metrics" id="metrics"></div><div class="metricInfo hidden" id="metricInfo"></div></div>
+      <div class="card" id="batCard"><h3>Bat speed <span class="xpchip">beta</span></h3><div id="batBody"></div></div>
       <div class="card"><h3>Swing phases (auto-detected)</h3>
         <div class="phaseGrid"><div><canvas id="kf0"></canvas><div class="cap">LOAD</div></div>
           <div><canvas id="kf1"></canvas><div class="cap">CONTACT</div></div>
@@ -483,8 +484,8 @@ function computeSeries(){ const N=samples.length,fps=30;
   if(meanVis<0.7)q.msgs.push("tracking confidence was low (angle or lighting)");
   if(peakMph<4)q.msgs.push("we didn't see a clear, fast swing");
   q.level=q.msgs.length===0?"good":(limbVis<0.5||detFrac<0.6||peakMph<3?"bad":"warn");
-  A={N,fps,sh,hip,hands,nose,Lank,Rank,px2in,spd,g,cands:merged,contact:defaultC,q};
-  recompute(defaultC); renderSwingChips(); renderQuality();
+  A={N,fps,sh,hip,hands,nose,Lank,Rank,px2in,spd,g,cands:merged,contact:defaultC,q,bat:null};
+  recompute(defaultC); renderSwingChips(); renderQuality(); estimateBat();
 }
 function burstAround(c){const th=0.4*A.spd[c];let s=c,e=c;while(s>A.g&&A.spd[s-1]>=th)s--;while(e<A.N-A.g-1&&A.spd[e+1]>=th)e++;return[s,e];}
 function recompute(contact){ A.contact=Math.max(A.g+1,Math.min(A.N-2,contact));
@@ -521,6 +522,7 @@ function renderResults(){ const sc=score(); $("#scoreNum").textContent=sc;
   drawKeyframes([["#kf0",A.load],["#kf1",A.contact],["#kf2",A.follow]]);
   const fix=pickFix(); $("#fixTitle").textContent=fix.title; $("#fixBody").innerHTML=fix.body; $("#fixDrill").innerHTML="🥎 <b>Drill:</b> "+fix.drill;
   const sb=$("#saveBtn"); sb.className="save"; sb.textContent="＋ Save & earn XP"; sb.disabled=false;
+  renderBatCard();
 }
 function mcard(k,v,u,label,flag){return `<button class="metric${flag?' flag':''}" data-k="${k}"><div class="v">${v}<small>${u}</small></div><div class="k">${label}</div><div class="more">tap to learn ›</div></button>`;}
 function pickFix(){ const issues=[
@@ -545,7 +547,84 @@ async function drawKeyframes(list){ for(const[sel,i]of list){ if(!samples[i])con
   const lm=samples[i]&&samples[i].lm; if(lm){const d=new DrawingUtils(cx);
     d.drawConnectors(lm,PoseLandmarker.POSE_CONNECTIONS,{color:"#FFFFFF",lineWidth:3});
     d.drawLandmarks(lm,{color:"#22d3ee",fillColor:"#C8102E",radius:3,lineWidth:1});}
-  if(i>=A.load)drawCues(cx,i); } }
+  if(i>=A.load)drawCues(cx,i);
+  if(i===A.contact)drawBatOnCanvas(cx,w,h); } }
+function drawBatOnCanvas(cx,w,h){ if(!A||!A.bat||A.bat.status!=="ok"||!A.bat.tipN||!A.bat.handN)return;
+  const hx=A.bat.handN[0]*w,hy=A.bat.handN[1]*h,tx=A.bat.tipN[0]*w,ty=A.bat.tipN[1]*h;
+  cx.strokeStyle="#ffd35b"; cx.lineWidth=5; cx.beginPath(); cx.moveTo(hx,hy); cx.lineTo(tx,ty); cx.stroke();
+  cx.fillStyle="#C8102E"; cx.beginPath(); cx.arc(tx,ty,7,0,7); cx.fill();
+  cx.font="bold 26px Arial"; cx.lineWidth=4; cx.strokeStyle="rgba(0,0,0,.55)";
+  const s=A.bat.mph+" mph", lx=Math.min(w-165,tx+10), ly=Math.max(28,ty-10);
+  cx.strokeText(s,lx,ly); cx.fillStyle="#fff"; cx.fillText(s,lx,ly); }
+
+const medianArr=a=>{a=a.slice().sort((x,y)=>x-y);return a[Math.floor(a.length/2)]||1;};
+function renderBatCard(){ const el=$("#batBody"); if(!el)return; if(!A||!A.bat){el.innerHTML="";return;} const b=A.bat;
+  if(b.status==="working"){ el.innerHTML='<div style="color:var(--mut);font-size:13px">Measuring bat speed… (analyzing the fast frames)</div>'; return; }
+  if(b.status==="slow"){ el.innerHTML='<div class="metric" style="cursor:default"><div class="v">—<small> mph</small></div><div class="k">Film in Slo-Mo to measure bat speed</div></div>'
+    +'<div style="font-size:12px;color:var(--mut);margin-top:8px">Bat speed needs a high-frame-rate clip. Record with your camera’s <b>Slo-Mo</b> mode (120fps or 240fps) and re-upload. This clip looked like standard speed.</div>'; return; }
+  if(b.status==="ok"){ const pct=Math.min(100,b.mph);
+    el.innerHTML='<div class="scoreRow"><div class="ring" style="background:conic-gradient(#E5A100 '+pct+'%, #e9edf2 0)"><i>'+b.mph+'</i></div>'
+    +'<div class="lab">Peak bat speed<b>'+b.mph+' mph</b><span style="font-size:12px;color:var(--mut)">camera estimate · beta</span></div></div>'
+    +'<div style="font-size:11.5px;color:var(--mut);margin-top:8px">Estimated from the bat’s motion — no sensor needed. Precision improves with higher frame rates; not yet sensor-calibrated.</div>'; return; }
+  if(b.status==="weak"){ el.innerHTML='<div style="font-size:12.5px;color:var(--mut)">No clear swing to measure bat speed on this clip.</div>'; return; }
+  el.innerHTML='<div style="font-size:12.5px;color:var(--mut)">Couldn’t estimate bat speed on this clip.</div>'; }
+
+async function estimateBat(){
+  try{
+    if(!A || A.q.peakMph<3){ A.bat={status:"weak"}; renderBatCard(); return; }
+    A.bat={status:"working"}; renderBatCard();
+    const ts=[],hx=[],hy=[],cxA=[],cyA=[],tdx=[],tdy=[];
+    for(const s of samples){ if(!s.lm)continue; const l=s.lm; ts.push(s.t);
+      hx.push((l[I.Lwr].x+l[I.Rwr].x)/2); hy.push((l[I.Lwr].y+l[I.Rwr].y)/2);
+      cxA.push((l[I.Lsh].x+l[I.Rsh].x+l[I.Lhip].x+l[I.Rhip].x)/4); cyA.push((l[I.Lsh].y+l[I.Rsh].y+l[I.Lhip].y+l[I.Rhip].y)/4);
+      tdx.push((l[I.Lsh].x+l[I.Rsh].x)/2-(l[I.Lhip].x+l[I.Rhip].x)/2); tdy.push((l[I.Lsh].y+l[I.Rsh].y)/2-(l[I.Lhip].y+l[I.Rhip].y)/2); }
+    if(ts.length<5){ A.bat={status:"unavailable"}; renderBatCard(); return; }
+    const interpAt=(t,xs)=>{ if(t<=ts[0])return xs[0]; if(t>=ts[ts.length-1])return xs[xs.length-1];
+      let i=0; while(i<ts.length-1 && ts[i+1]<t) i++; const f=(t-ts[i])/(ts[i+1]-ts[i]); return xs[i]+(xs[i+1]-xs[i])*f; };
+    const bh=Math.min(480,overlay.height||480), sc=bh/(overlay.height||480), bw=Math.max(120,Math.round((overlay.width||270)*sc));
+    const torsoPx=medianArr(tdx.map((_,i)=>Math.hypot(tdx[i]*bw,tdy[i]*bh)))||bh*0.3, px2in=22/torsoPx;
+    const bc=document.createElement("canvas"); bc.width=bw; bc.height=bh; const bx=bc.getContext("2d",{willReadFrequently:true});
+    const tC=samples[A.contact].t, dur=vid.duration||tC+0.3;
+    const t0=Math.max(0.03,tC-0.45), t1=Math.min(dur-0.02,tC+0.22), dt=1/120;
+    const Rmin=0.10*bh, Rmax=0.60*bh, dr=(Rmax-Rmin)/24;
+    let prevGray=null, prevA=null, step=0, dup=0; const rec=[];
+    for(let t=t0;t<=t1;t+=dt){
+      await seek(t); bx.drawImage(vid,0,0,bw,bh);
+      const data=bx.getImageData(0,0,bw,bh).data, gray=new Float32Array(bw*bh);
+      for(let p=0,q=0;p<data.length;p+=4,q++) gray[q]=0.299*data[p]+0.587*data[p+1]+0.114*data[p+2];
+      if(prevGray){
+        let gd=0,cnt=0; for(let q=0;q<gray.length;q+=9){ gd+=Math.abs(gray[q]-prevGray[q]); cnt++; } gd/=cnt;
+        step++;
+        if(gd<1.2){ dup++; if(step>=14 && dup/step>0.65){ A.bat={status:"slow"}; renderBatCard(); return; } prevGray=gray; continue; }
+        const h=[interpAt(t,hx)*bw,interpAt(t,hy)*bh], tc=[interpAt(t,cxA)*bw,interpAt(t,cyA)*bh];
+        const odx=h[0]-tc[0], ody=h[1]-tc[1], on=Math.hypot(odx,ody)||1;
+        let best=null,bestS=-1;
+        for(let deg=0;deg<360;deg+=4){ const a=deg*Math.PI/180,dx=Math.cos(a),dy=Math.sin(a);
+          if((dx*odx+dy*ody)/on < -0.2) continue;
+          if(prevA!=null){ const da=Math.abs(Math.atan2(Math.sin(a-prevA),Math.cos(a-prevA))); if(da>1.4) continue; }
+          let s=0,c=0; for(let r=Rmin;r<=Rmax;r+=dr){ const x=Math.round(h[0]+dx*r),y=Math.round(h[1]+dy*r);
+            if(x>=0&&x<bw&&y>=0&&y<bh){ const q=y*bw+x; s+=Math.abs(gray[q]-prevGray[q]); c++; } }
+          if(c>10){ s/=c; if(s>bestS){bestS=s;best=a;} } }
+        if(best!=null){ prevA=best; const dx=Math.cos(best),dy=Math.sin(best); let tip=[h[0]+dx*Rmax*0.7,h[1]+dy*Rmax*0.7];
+          for(let r=Rmin;r<=Rmax;r+=dr){ const x=Math.round(h[0]+dx*r),y=Math.round(h[1]+dy*r);
+            if(x>=0&&x<bw&&y>=0&&y<bh){ const q=y*bw+x; if(Math.abs(gray[q]-prevGray[q])>Math.max(12,bestS*0.5)) tip=[x,y]; } }
+          rec.push({t,tip,hand:h}); }
+      }
+      prevGray=gray;
+    }
+    if(rec.length<8){ A.bat={status:"slow"}; renderBatCard(); return; }
+    const effFps=(rec.length-1)/(rec[rec.length-1].t-rec[0].t);
+    if(effFps<55){ A.bat={status:"slow"}; renderBatCard(); return; }
+    const sp=[0];
+    for(let i=1;i<rec.length;i++){ const d=Math.hypot(rec[i].tip[0]-rec[i-1].tip[0],rec[i].tip[1]-rec[i-1].tip[1]);
+      sp.push(d*px2in/(rec[i].t-rec[i-1].t)/17.6); }
+    let peak=0; for(let i=0;i<sp.length;i++){ let a=0,c=0; for(let j=Math.max(0,i-1);j<=Math.min(sp.length-1,i+1);j++){a+=sp[j];c++;} const v=a/c; if(v>peak)peak=v; }
+    if(peak<8||peak>130){ A.bat={status:"unavailable"}; renderBatCard(); return; }
+    let near=rec[0],nd=1e9; for(const r of rec){ const q=Math.abs(r.t-tC); if(q<nd){nd=q;near=r;} }
+    A.bat={status:"ok",mph:Math.round(peak),tipN:[near.tip[0]/bw,near.tip[1]/bh],handN:[near.hand[0]/bw,near.hand[1]/bh]};
+    renderBatCard(); try{ await drawKeyframes([["#kf1",A.contact]]); }catch(e){}
+  }catch(e){ A.bat={status:"unavailable"}; renderBatCard(); }
+}
 function renderSwingChips(){ const card=$("#swingPickCard"),wrap=$("#swingChips");
   if(A.cands.length<=1){card.style.display="none";return;} card.style.display="";wrap.innerHTML="";
   A.cands.forEach((c,idx)=>{const b=document.createElement("button");b.className="chip"+(c===A.contact?" on":"");
@@ -567,7 +646,8 @@ $("#saveBtn").onclick=()=>{ if(!A)return; const kf=$("#kf1"); let thumb="";
     tc.getContext("2d").drawImage(kf,0,0,tc.width,tc.height);thumb=tc.toDataURL("image/jpeg",0.6);}catch(e){}
   const head=Math.round(A.headTravel);
   const rec={id:Date.now(),date:new Date().toLocaleDateString(undefined,{month:"short",day:"numeric"}),
-    score:score(),head,tempo:+(A.tempoMs/1000).toFixed(2),stride:+A.strideIn.toFixed(1),vis:Math.round(A.q.meanVis*100),fix:pickFix().title,thumb};
+    score:score(),head,tempo:+(A.tempoMs/1000).toFixed(2),stride:+A.strideIn.toFixed(1),vis:Math.round(A.q.meanVis*100),
+    batMph:(A.bat&&A.bat.status==="ok")?A.bat.mph:null,fix:pickFix().title,thumb};
   const h=getHistory(); h.push(rec); while(h.length>20)h.shift(); setHistory(h);
   // gamification
   const p=getProfile(); p.swings=(p.swings||0)+1;
