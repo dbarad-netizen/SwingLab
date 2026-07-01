@@ -125,6 +125,7 @@
   .pchip{margin-left:auto;font-size:11px;font-weight:700;padding:4px 9px;border-radius:20px}
   .pchip.up{background:#eef5ee;color:#27502b}.pchip.new{background:#fff4e5;color:#9a6212}.pchip.watch{background:#fdeef0;color:var(--red)}
   /* toast */
+  #shareBtn.prglow{box-shadow:0 0 0 2px #E5A100;color:#9a6b00;background:#fff9ec}
   #toast{position:fixed;left:50%;bottom:92px;transform:translateX(-50%) translateY(20px);background:#1b2430;color:#fff;padding:10px 16px;border-radius:24px;font-weight:700;font-size:14px;opacity:0;transition:.25s;z-index:50;pointer-events:none}
   #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
   .tabs{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:480px;display:flex;background:#fff;border-top:1px solid var(--line)}
@@ -191,6 +192,7 @@
           <button class="mini" id="cMinus">◀ earlier</button><button class="mini" id="cPlus">later ▶</button></div></div>
       <div class="card fix"><span class="tagline">Your #1 fix</span><h2 id="fixTitle"></h2><p id="fixBody"></p><div class="drill" id="fixDrill"></div></div>
       <button class="save" id="saveBtn">＋ Save &amp; earn XP</button>
+      <button class="ghost" id="shareBtn">📸 Share my swing</button>
       <button class="ghost" id="againBtn">Analyze another swing</button>
       <div class="demoNote">Pose tracking runs on your device. Score &amp; coaching are heuristic guidance.</div>
     </div>
@@ -222,6 +224,7 @@
       <button class="clear" id="authClose" style="display:block;margin:10px auto 0">Cancel</button>
     </div>
   </div>
+  <canvas id="confetti" class="hidden" style="position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:70"></canvas>
   <div id="toast"></div>
   <div class="tabs">
     <div class="tab active" data-v="home"><span class="ic">🏠</span>Home</div>
@@ -404,6 +407,7 @@ async function logout(){ try{ await sb.auth.signOut(); }catch(e){} ME=null; upda
 function initAccountUI(){
   $("#acctBtn").onclick=()=>{ if(ME){ if(confirm("Sign out of "+ME.username+"?")) logout(); } else openAuth(); };
   $("#authSignup").onclick=()=>doAuth("signup"); $("#authLogin").onclick=()=>doAuth("login"); $("#authClose").onclick=closeAuth;
+  const shb=$("#shareBtn"); if(shb) shb.onclick=()=>buildAndShare();
 }
 
 /* ============ SOCIAL DATA ============ */
@@ -620,7 +624,8 @@ function renderResults(){ const sc=score(); $("#scoreNum").textContent=sc;
   document.querySelectorAll(".metric").forEach(m=>m.onclick=()=>{const inf=$("#metricInfo");inf.classList.remove("hidden");inf.innerHTML=METRIC_INFO[m.dataset.k];});
   drawKeyframes([["#kf0",A.load],["#kf1",A.contact],["#kf2",A.follow]]);
   const fix=pickFix(); $("#fixTitle").textContent=fix.title; $("#fixBody").innerHTML=fix.body; $("#fixDrill").innerHTML="🥎 <b>Drill:</b> "+fix.drill;
-  const sb=$("#saveBtn"); sb.className="save"; sb.textContent="＋ Save & earn XP"; sb.disabled=false;
+  const sbtn=$("#saveBtn"); sbtn.className="save"; sbtn.textContent="＋ Save & earn XP"; sbtn.disabled=false;
+  const shb=$("#shareBtn"); if(shb){ shb.textContent="📸 Share my swing"; shb.classList.remove("prglow"); }
   renderBatCard();
 }
 function mcard(k,v,u,label,flag){return `<button class="metric${flag?' flag':''}" data-k="${k}"><div class="v">${v}<small>${u}</small></div><div class="k">${label}</div><div class="more">tap to learn ›</div></button>`;}
@@ -744,9 +749,11 @@ $("#saveBtn").onclick=async()=>{ if(!A)return; const kf=$("#kf1"); let thumb="";
   try{const tc=document.createElement("canvas");tc.width=120;tc.height=Math.round(120*kf.height/kf.width);
     tc.getContext("2d").drawImage(kf,0,0,tc.width,tc.height);thumb=tc.toDataURL("image/jpeg",0.6);}catch(e){}
   const head=Math.round(A.headTravel);
+  const bat=(A.bat&&A.bat.status==="ok")?A.bat.mph:null, sc=score();
+  const prevBat=localBestBat(), prevScore=getHistory().reduce((m,r)=>Math.max(m,r.score||0),0);
   const rec={id:Date.now(),date:new Date().toLocaleDateString(undefined,{month:"short",day:"numeric"}),
-    score:score(),head,tempo:+(A.tempoMs/1000).toFixed(2),stride:+A.strideIn.toFixed(1),vis:Math.round(A.q.meanVis*100),
-    batMph:(A.bat&&A.bat.status==="ok")?A.bat.mph:null,fix:pickFix().title,thumb};
+    score:sc,head,tempo:+(A.tempoMs/1000).toFixed(2),stride:+A.strideIn.toFixed(1),vis:Math.round(A.q.meanVis*100),
+    batMph:bat,fix:pickFix().title,thumb};
   const h=getHistory(); h.push(rec); while(h.length>20)h.shift(); setHistory(h);
   // gamification
   const p=getProfile(); p.swings=(p.swings||0)+1;
@@ -755,9 +762,12 @@ $("#saveBtn").onclick=async()=>{ if(!A)return; const kf=$("#kf1"); let thumb="";
   else { p.bestHead=Math.min(p.bestHead,head); }
   setProfile(p); award(p, xp+bonus, reason);
   const sbtn=$("#saveBtn"); sbtn.className="save done"; sbtn.textContent="✓ Saved · +"+(xp+bonus)+" XP"; sbtn.disabled=true;
+  const batPR = bat!=null && bat>(prevBat||0), scorePR = sc>prevScore;
+  lastSwing={bat,sc,head,batPR,scorePR};
+  const shb=$("#shareBtn"); if(shb){ shb.textContent=(batPR||scorePR)?"📸 Share your new PR!":"📸 Share my swing"; shb.classList.toggle("prglow",batPR||scorePR); }
+  if(batPR||scorePR) celebrate(batPR?("New bat-speed PR — "+bat+" mph!"):("New best score — "+sc+"!"));
   if(ME){ try{
-    const bat=(A.bat&&A.bat.status==="ok")?A.bat.mph:null;
-    await sb.from("swings").insert({user_id:ME.id,score:rec.score,head:rec.head,tempo:rec.tempo,stride:rec.stride,bat_mph:bat,fix:rec.fix});
+    await sb.from("swings").insert({user_id:ME.id,score:sc,head,tempo:rec.tempo,stride:rec.stride,bat_mph:bat,fix:rec.fix});
     const patch={ swings:(ME.swings||0)+1, xp:(ME.xp||0)+xp+bonus, best_head:(ME.best_head==null)?head:Math.min(ME.best_head,head) };
     if(bat!=null) patch.best_bat=Math.max(ME.best_bat||0,bat);
     const {data}=await sb.from("profiles").update(patch).eq("id",ME.id).select().maybeSingle(); if(data) ME=data;
@@ -779,6 +789,55 @@ function seedDemo(){
   newBadges(p); setProfile(p);
 }
 function hasData(){ try{ return !!localStorage.getItem(PKEY) || getHistory().length>0; }catch(e){ return false; } }
+
+/* ============ SHARE MOMENT + CELEBRATION ============ */
+let lastSwing=null;
+function currentStats(){ return { bat:(A&&A.bat&&A.bat.status==="ok")?A.bat.mph:null, score:A?score():null, head:A?Math.round(A.headTravel):null, tempo:A?(A.tempoMs/1000).toFixed(2):null }; }
+function rr(x,rx,ry,w,h,r){ x.beginPath(); x.moveTo(rx+r,ry); x.arcTo(rx+w,ry,rx+w,ry+h,r); x.arcTo(rx+w,ry+h,rx,ry+h,r); x.arcTo(rx,ry+h,rx,ry,r); x.arcTo(rx,ry,rx+w,ry,r); x.closePath(); }
+function buildShareCard(){
+  const W=1080,H=1350,c=document.createElement("canvas"); c.width=W;c.height=H; const x=c.getContext("2d");
+  const g=x.createLinearGradient(0,0,0,H); g.addColorStop(0,"#24406b"); g.addColorStop(1,"#0d1826"); x.fillStyle=g; x.fillRect(0,0,W,H);
+  x.textBaseline="top"; x.textAlign="left";
+  x.font="800 60px Arial"; x.fillStyle="#fff"; x.fillText("Swing",56,50); x.fillStyle="#ff5b6e"; x.fillText("Lab",56+x.measureText("Swing").width,50);
+  if(ME){ x.font="600 30px Arial"; x.fillStyle="#cdd7e5"; x.textAlign="right"; x.fillText("@"+ME.username,W-56,66); x.textAlign="left"; }
+  const kf=$("#kf1"); let heroBottom=170;
+  if(kf&&kf.width){ const bw=W-112, bh=Math.min(690, Math.round(bw*kf.height/kf.width)), bx=56, by=170, dh=bw*kf.height/kf.width;
+    rr(x,bx,by,bw,bh,28); x.save(); x.clip(); x.drawImage(kf,bx,by-(dh-bh)/2,bw,dh); x.restore();
+    x.lineWidth=3; x.strokeStyle="rgba(255,255,255,.15)"; rr(x,bx,by,bw,bh,28); x.stroke(); heroBottom=by+bh; }
+  const st=currentStats();
+  const bigVal=st.bat!=null?(""+st.bat):(st.score!=null?""+st.score:"—"), bigLab=st.bat!=null?"MPH BAT SPEED":"SWING SCORE";
+  let y=heroBottom+44;
+  x.fillStyle="#E5A100"; x.font="800 132px Arial"; x.fillText(bigVal,52,y);
+  x.fillStyle="#cdd7e5"; x.font="700 30px Arial"; x.fillText(bigLab,58,y+142);
+  const subs=[["Score",st.score],["Head drift",st.head!=null?st.head+'"':"—"],["Tempo",st.tempo!=null?st.tempo+"s":"—"]];
+  let sx=56; const sy=y+210;
+  subs.forEach(s=>{ x.fillStyle="#fff"; x.font="800 42px Arial"; x.fillText((s[1]==null?"—":s[1])+"",sx,sy); x.fillStyle="#8ea0b8"; x.font="600 24px Arial"; x.fillText(s[0],sx,sy+52); sx+=328; });
+  if(lastSwing&&(lastSwing.batPR||lastSwing.scorePR)){ x.fillStyle="#C8102E"; rr(x,W-372,176,312,66,14); x.fill(); x.fillStyle="#fff"; x.font="800 30px Arial"; x.textAlign="center"; x.fillText("★ PERSONAL BEST",W-216,194); x.textAlign="left"; }
+  x.fillStyle="#7d8ba0"; x.font="600 26px Arial"; x.fillText("swing-lab-olive.vercel.app",56,H-54);
+  return c;
+}
+async function buildAndShare(){
+  if(!A){ toast("Analyze a swing first"); return; }
+  const c=buildShareCard();
+  c.toBlob(async(blob)=>{ if(!blob){ toast("Couldn't build image"); return; }
+    const file=new File([blob],"swinglab-swing.png",{type:"image/png"});
+    try{ if(navigator.canShare && navigator.canShare({files:[file]})){
+      await navigator.share({files:[file],title:"My SwingLab swing",text:(lastSwing&&(lastSwing.batPR||lastSwing.scorePR))?"New personal best on SwingLab! ⚾🔥":"My swing on SwingLab ⚾"}); return; } }catch(e){ if(e&&e.name==="AbortError")return; }
+    const url=URL.createObjectURL(blob); const a=document.createElement("a"); a.href=url; a.download="swinglab-swing.png"; a.click(); setTimeout(()=>URL.revokeObjectURL(url),1500); toast("Highlight image saved 📸");
+  },"image/png");
+}
+function fireConfetti(){ const cv=$("#confetti"); if(!cv)return; cv.classList.remove("hidden"); cv.width=innerWidth; cv.height=innerHeight; const x=cv.getContext("2d");
+  const cols=["#E5A100","#C8102E","#1F3A5F","#39a35a","#ffd35b","#22d3ee"], P=[];
+  for(let i=0;i<150;i++) P.push({x:Math.random()*cv.width,y:-20-Math.random()*cv.height*0.4,vx:(Math.random()-0.5)*5,vy:3+Math.random()*5,r:6+Math.random()*7,c:cols[i%cols.length],rot:Math.random()*6,vr:(Math.random()-0.5)*0.4});
+  const t0=performance.now();
+  (function frame(t){ const el=t-t0; x.clearRect(0,0,cv.width,cv.height);
+    P.forEach(p=>{ p.x+=p.vx; p.y+=p.vy; p.vy+=0.06; p.rot+=p.vr; x.save(); x.translate(p.x,p.y); x.rotate(p.rot); x.fillStyle=p.c; x.fillRect(-p.r/2,-p.r/2,p.r,p.r*0.6); x.restore(); });
+    if(el<2600) requestAnimationFrame(frame); else { x.clearRect(0,0,cv.width,cv.height); cv.classList.add("hidden"); } })(t0);
+}
+function ding(){ try{ const a=new (window.AudioContext||window.webkitAudioContext)(), o=a.createOscillator(), g2=a.createGain();
+  o.connect(g2); g2.connect(a.destination); o.type="triangle"; o.frequency.setValueAtTime(660,a.currentTime); o.frequency.exponentialRampToValueAtTime(1320,a.currentTime+0.15);
+  g2.gain.setValueAtTime(0.001,a.currentTime); g2.gain.exponentialRampToValueAtTime(0.25,a.currentTime+0.03); g2.gain.exponentialRampToValueAtTime(0.001,a.currentTime+0.4); o.start(); o.stop(a.currentTime+0.42); }catch(e){} }
+function celebrate(msg){ fireConfetti(); ding(); toast("🎉 "+msg); }
 
 /* boot */
 if(!hasData()) seedDemo();
