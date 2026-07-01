@@ -224,6 +224,13 @@
       <button class="clear" id="authClose" style="display:block;margin:10px auto 0">Cancel</button>
     </div>
   </div>
+  <div id="shareModal" class="hidden" style="position:fixed;inset:0;background:rgba(8,12,18,.85);z-index:80;display:flex;align-items:center;justify-content:center;padding:16px;flex-direction:column">
+    <img id="shareImg" alt="Your highlight card" style="width:340px;max-width:86vw;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.6)"/>
+    <div style="display:flex;gap:10px;margin-top:14px">
+      <button class="btn" id="shareDo" style="width:auto;padding:12px 22px;margin:0">📲 Share / Save</button>
+      <button class="ghost" id="shareClose" style="width:auto;padding:12px 22px;margin:0;background:#20304a;color:#fff;border:0">Close</button>
+    </div>
+  </div>
   <canvas id="confetti" class="hidden" style="position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:70"></canvas>
   <div id="toast"></div>
   <div class="tabs">
@@ -407,7 +414,9 @@ async function logout(){ try{ await sb.auth.signOut(); }catch(e){} ME=null; upda
 function initAccountUI(){
   $("#acctBtn").onclick=()=>{ if(ME){ if(confirm("Sign out of "+ME.username+"?")) logout(); } else openAuth(); };
   $("#authSignup").onclick=()=>doAuth("signup"); $("#authLogin").onclick=()=>doAuth("login"); $("#authClose").onclick=closeAuth;
-  const shb=$("#shareBtn"); if(shb) shb.onclick=()=>buildAndShare();
+  const shb=$("#shareBtn"); if(shb) shb.onclick=()=>openSharePreview();
+  const sd=$("#shareDo"); if(sd) sd.onclick=()=>doShare();
+  const sc=$("#shareClose"); if(sc) sc.onclick=()=>closeShare();
 }
 
 /* ============ SOCIAL DATA ============ */
@@ -700,7 +709,11 @@ async function estimateBat(){
         let gd=0,cnt=0; for(let q=0;q<gray.length;q+=9){ gd+=Math.abs(gray[q]-prevGray[q]); cnt++; } gd/=cnt;
         step++;
         if(gd<1.2){ dup++; if(step>=14 && dup/step>0.65){ A.bat={status:"slow"}; renderBatCard(); return; } prevGray=gray; continue; }
-        const h=[interpAt(t,hx)*bw,interpAt(t,hy)*bh], tc=[interpAt(t,cxA)*bw,interpAt(t,cyA)*bh];
+        let h=null, tc=null;
+        try{ const pr=landmarker.detect(bc); const l2=pr&&pr.landmarks&&pr.landmarks[0];
+          if(l2){ h=[(l2[I.Lwr].x+l2[I.Rwr].x)/2*bw,(l2[I.Lwr].y+l2[I.Rwr].y)/2*bh];
+            tc=[(l2[I.Lsh].x+l2[I.Rsh].x+l2[I.Lhip].x+l2[I.Rhip].x)/4*bw,(l2[I.Lsh].y+l2[I.Rsh].y+l2[I.Lhip].y+l2[I.Rhip].y)/4*bh]; } }catch(e){}
+        if(!h){ h=[interpAt(t,hx)*bw,interpAt(t,hy)*bh]; tc=[interpAt(t,cxA)*bw,interpAt(t,cyA)*bh]; }
         const odx=h[0]-tc[0], ody=h[1]-tc[1], on=Math.hypot(odx,ody)||1;
         let best=null,bestS=-1;
         for(let deg=0;deg<360;deg+=4){ const a=deg*Math.PI/180,dx=Math.cos(a),dy=Math.sin(a);
@@ -722,8 +735,12 @@ async function estimateBat(){
     const sp=[0];
     for(let i=1;i<rec.length;i++){ const d=Math.hypot(rec[i].tip[0]-rec[i-1].tip[0],rec[i].tip[1]-rec[i-1].tip[1]);
       sp.push(d*px2in/(rec[i].t-rec[i-1].t)/17.6); }
-    let peak=0; for(let i=0;i<sp.length;i++){ let a=0,c=0; for(let j=Math.max(0,i-1);j<=Math.min(sp.length-1,i+1);j++){a+=sp[j];c++;} const v=a/c; if(v>peak)peak=v; }
-    if(peak<8||peak>130){ A.bat={status:"unavailable"}; renderBatCard(); return; }
+    const sm=sp.map((_,i)=>{let a=0,c=0;for(let j=Math.max(0,i-1);j<=Math.min(sp.length-1,i+1);j++){a+=sp[j];c++;}return a/c;});
+    // robust peak: 3rd-highest smoothed speed rejects one or two erratic tip spikes
+    const sorted=sm.slice().sort((a,b)=>b-a);
+    let peak=sorted[Math.min(2,sorted.length-1)]||0;
+    if(peak<8){ A.bat={status:"weak"}; renderBatCard(); return; }
+    if(peak>150) peak=150;
     let near=rec[0],nd=1e9; for(const r of rec){ const q=Math.abs(r.t-tC); if(q<nd){nd=q;near=r;} }
     A.bat={status:"ok",mph:Math.round(peak),tipN:[near.tip[0]/bw,near.tip[1]/bh],handN:[near.hand[0]/bw,near.hand[1]/bh]};
     renderBatCard(); try{ await drawKeyframes([["#kf1",A.contact]]); }catch(e){}
@@ -816,16 +833,18 @@ function buildShareCard(){
   x.fillStyle="#7d8ba0"; x.font="600 26px Arial"; x.fillText("swing-lab-olive.vercel.app",56,H-54);
   return c;
 }
-async function buildAndShare(){
-  if(!A){ toast("Analyze a swing first"); return; }
-  const c=buildShareCard();
-  c.toBlob(async(blob)=>{ if(!blob){ toast("Couldn't build image"); return; }
+let _shareCanvas=null;
+function openSharePreview(){ if(!A){ toast("Analyze a swing first"); return; }
+  try{ _shareCanvas=buildShareCard(); $("#shareImg").src=_shareCanvas.toDataURL("image/png"); $("#shareModal").classList.remove("hidden"); }
+  catch(e){ toast("Couldn't build image"); } }
+function closeShare(){ $("#shareModal").classList.add("hidden"); }
+async function doShare(){ if(!_shareCanvas)return;
+  _shareCanvas.toBlob(async(blob)=>{ if(!blob){ toast("Couldn't build image"); return; }
     const file=new File([blob],"swinglab-swing.png",{type:"image/png"});
     try{ if(navigator.canShare && navigator.canShare({files:[file]})){
-      await navigator.share({files:[file],title:"My SwingLab swing",text:(lastSwing&&(lastSwing.batPR||lastSwing.scorePR))?"New personal best on SwingLab! ⚾🔥":"My swing on SwingLab ⚾"}); return; } }catch(e){ if(e&&e.name==="AbortError")return; }
-    const url=URL.createObjectURL(blob); const a=document.createElement("a"); a.href=url; a.download="swinglab-swing.png"; a.click(); setTimeout(()=>URL.revokeObjectURL(url),1500); toast("Highlight image saved 📸");
-  },"image/png");
-}
+      await navigator.share({files:[file],title:"My SwingLab swing",text:(lastSwing&&(lastSwing.batPR||lastSwing.scorePR))?"New personal best on SwingLab! ⚾🔥":"My swing on SwingLab ⚾"}); closeShare(); return; } }catch(e){ if(e&&e.name==="AbortError")return; }
+    const url=URL.createObjectURL(blob); const a=document.createElement("a"); a.href=url; a.download="swinglab-swing.png"; a.click(); setTimeout(()=>URL.revokeObjectURL(url),1500); toast("Highlight image saved 📸"); closeShare();
+  },"image/png"); }
 function fireConfetti(){ const cv=$("#confetti"); if(!cv)return; cv.classList.remove("hidden"); cv.width=innerWidth; cv.height=innerHeight; const x=cv.getContext("2d");
   const cols=["#E5A100","#C8102E","#1F3A5F","#39a35a","#ffd35b","#22d3ee"], P=[];
   for(let i=0;i<150;i++) P.push({x:Math.random()*cv.width,y:-20-Math.random()*cv.height*0.4,vx:(Math.random()-0.5)*5,vy:3+Math.random()*5,r:6+Math.random()*7,c:cols[i%cols.length],rot:Math.random()*6,vr:(Math.random()-0.5)*0.4});
