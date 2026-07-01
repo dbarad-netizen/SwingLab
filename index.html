@@ -191,6 +191,12 @@
           <span><i class="dot" style="background:#C8102E"></i> now</span><span>┊ start ref</span></div>
         <div class="ctrls"><span class="lab">Contact off? Nudge it:</span>
           <button class="mini" id="cMinus">◀ earlier</button><button class="mini" id="cPlus">later ▶</button></div></div>
+      <div class="card hidden" id="compareCard"><h3>👻 You vs. your best swing</h3>
+        <div class="phaseGrid"><div><canvas id="cmp0"></canvas><div class="cap">LOAD</div></div>
+          <div><canvas id="cmp1"></canvas><div class="cap">CONTACT</div></div>
+          <div><canvas id="cmp2"></canvas><div class="cap">FOLLOW</div></div></div>
+        <div class="legend"><span><i class="dot" style="background:#1F3A5F"></i> this swing</span><span><i class="dot" style="background:#aab4c2"></i> your best</span></div>
+        <div id="cmpDeltas" style="margin-top:8px"></div></div>
       <div class="card fix"><span class="tagline">Your #1 fix</span><h2 id="fixTitle"></h2><p id="fixBody"></p><div class="drill" id="fixDrill"></div></div>
       <button class="save" id="saveBtn">＋ Save &amp; earn XP</button>
       <button class="ghost" id="shareBtn">📸 Share my swing</button>
@@ -670,7 +676,7 @@ function renderResults(){ const sc=score(); $("#scoreNum").textContent=sc;
   const fix=pickFix(); $("#fixTitle").textContent=fix.title; $("#fixBody").innerHTML=fix.body; $("#fixDrill").innerHTML="🥎 <b>Drill:</b> "+fix.drill;
   const sbtn=$("#saveBtn"); sbtn.className="save"; sbtn.textContent="＋ Save & earn XP"; sbtn.disabled=false;
   const shb=$("#shareBtn"); if(shb){ shb.textContent="📸 Share my swing"; shb.classList.remove("prglow"); }
-  renderBatCard();
+  renderBatCard(); renderCompareBest();
 }
 function mcard(k,v,u,label,flag){return `<button class="metric${flag?' flag':''}" data-k="${k}"><div class="v">${v}<small>${u}</small></div><div class="k">${label}</div><div class="more">tap to learn ›</div></button>`;}
 function pickFix(){ const issues=[
@@ -819,6 +825,7 @@ $("#saveBtn").onclick=async()=>{ if(!A)return; const kf=$("#kf1"); let thumb="";
   const sbtn=$("#saveBtn"); sbtn.className="save done"; sbtn.textContent="✓ Saved · +"+(xp+bonus)+" XP"; sbtn.disabled=true;
   const batPR = bat!=null && bat>(prevBat||0), scorePR = sc>prevScore;
   lastSwing={bat,sc,head,batPR,scorePR};
+  if(batPR||scorePR||!getRef()) captureReference();
   const shb=$("#shareBtn"); if(shb){ shb.textContent=(batPR||scorePR)?"📸 Share your new PR!":"📸 Share my swing"; shb.classList.toggle("prglow",batPR||scorePR); }
   if(batPR||scorePR) celebrate(batPR?("New bat-speed PR — "+bat+" mph!"):("New best score — "+sc+"!"));
   if(ME){ try{
@@ -962,6 +969,39 @@ function ding(){ try{ const a=new (window.AudioContext||window.webkitAudioContex
   o.connect(g2); g2.connect(a.destination); o.type="triangle"; o.frequency.setValueAtTime(660,a.currentTime); o.frequency.exponentialRampToValueAtTime(1320,a.currentTime+0.15);
   g2.gain.setValueAtTime(0.001,a.currentTime); g2.gain.exponentialRampToValueAtTime(0.25,a.currentTime+0.03); g2.gain.exponentialRampToValueAtTime(0.001,a.currentTime+0.4); o.start(); o.stop(a.currentTime+0.42); }catch(e){} }
 function celebrate(msg){ fireConfetti(); ding(); toast("🎉 "+msg); }
+
+/* ============ GHOST COMPARE (you vs your best) ============ */
+const REFKEY="swinglab_ref_v1";
+const CONN=[[11,12],[11,23],[12,24],[23,24],[11,13],[13,15],[12,14],[14,16],[23,25],[25,27],[24,26],[26,28],[27,31],[28,32],[0,11],[0,12]];
+function getRef(){ try{ return JSON.parse(localStorage.getItem(REFKEY)||"null"); }catch(e){ return null; } }
+function setRef(r){ try{ localStorage.setItem(REFKEY,JSON.stringify(r)); }catch(e){} }
+function phasePts(i){ return (samples[i]&&samples[i].lm)? samples[i].lm.map(p=>[+p.x.toFixed(4),+p.y.toFixed(4)]) : null; }
+function captureReference(){ if(!A)return; const load=phasePts(A.load),contact=phasePts(A.contact),follow=phasePts(A.follow);
+  if(!load||!contact||!follow)return;
+  setRef({ts:Date.now(),load,contact,follow,bat:(A.bat&&A.bat.status==="ok")?A.bat.mph:null,score:score(),head:Math.round(A.headTravel),tempo:+(A.tempoMs/1000).toFixed(2)}); }
+function drawSkel(cx,pts,w,h,color,lw,alpha){ cx.save(); cx.globalAlpha=alpha; cx.strokeStyle=color; cx.fillStyle=color; cx.lineWidth=lw;
+  CONN.forEach(([a,b])=>{ if(pts[a]&&pts[b]){ cx.beginPath(); cx.moveTo(pts[a][0]*w,pts[a][1]*h); cx.lineTo(pts[b][0]*w,pts[b][1]*h); cx.stroke(); } });
+  pts.forEach(p=>{ if(p){ cx.beginPath(); cx.arc(p[0]*w,p[1]*h,3,0,7); cx.fill(); } }); cx.restore(); }
+function alignPts(ref,cur){ const mid=(p,a,b)=>[(p[a][0]+p[b][0])/2,(p[a][1]+p[b][1])/2];
+  const rH=mid(ref,23,24),cH=mid(cur,23,24),rS=mid(ref,11,12),cS=mid(cur,11,12);
+  const rT=Math.hypot(rS[0]-rH[0],rS[1]-rH[1])||0.1,cT=Math.hypot(cS[0]-cH[0],cS[1]-cH[1])||0.1,s=cT/rT;
+  return ref.map(p=>[cH[0]+(p[0]-rH[0])*s,cH[1]+(p[1]-rH[1])*s]); }
+function renderCompareBest(){ const card=$("#compareCard"); if(!card)return; const ref=getRef();
+  if(!ref||!A){ card.classList.add("hidden"); return; }
+  const rows=[["#cmp0",A.load,ref.load],["#cmp1",A.contact,ref.contact],["#cmp2",A.follow,ref.follow]]; let any=false;
+  for(const [sel,ci,refP] of rows){ const c=$(sel); if(!c)continue; const w=180,h=240; c.width=w;c.height=h;
+    const cx=c.getContext("2d"); cx.fillStyle="#eef2f7"; cx.fillRect(0,0,w,h);
+    const cur=(samples[ci]&&samples[ci].lm)? samples[ci].lm.map(p=>[p.x,p.y]) : null;
+    if(refP&&cur){ drawSkel(cx,alignPts(refP,cur),w,h,"#aab4c2",4,0.95); any=true; }
+    if(cur){ drawSkel(cx,cur,w,h,"#1F3A5F",4,1); } }
+  if(!any){ card.classList.add("hidden"); return; }
+  const cur={bat:(A.bat&&A.bat.status==="ok")?A.bat.mph:null,score:score(),head:Math.round(A.headTravel),tempo:+(A.tempoMs/1000).toFixed(2)};
+  const drow=(lab,c,r,better)=>{ if(c==null||r==null)return''; const d=+(c-r).toFixed(2); const good=better==="up"?d>0:d<0;
+    const cls=d===0?'':(good?'delta good':'delta bad'),sign=d>0?'+':''; return `<div>${lab}</div><div>${r}</div><div class="${cls}">${c} <small>(${sign}${d})</small></div>`; };
+  $("#cmpDeltas").innerHTML=`<div class="cmp"><div class="hd">Metric</div><div class="hd">Best</div><div class="hd">This</div>`
+    +drow("Bat speed (mph)",cur.bat,ref.bat,"up")+drow("Head drift (in)",cur.head,ref.head,"down")+drow("Tempo (s)",cur.tempo,ref.tempo,"down")+drow("Score",cur.score,ref.score,"up")+`</div>`
+    +`<div class="demoNote">Skeletons aligned at the hips to compare posture &amp; path. Film from a similar angle for the cleanest overlay.</div>`;
+  card.classList.remove("hidden"); }
 
 /* boot */
 if(!hasData()) seedDemo();
