@@ -569,10 +569,16 @@ function loadSample(key){ const s=SAMPLES[key]; if(!s)return; errEl.textContent=
   statusEl.textContent="Sample loaded. Tap Analyze swing."; $("#stageCard").scrollIntoView({behavior:"smooth"}); }
 document.querySelectorAll(".sampleBtn").forEach(b=>b.onclick=()=>loadSample(b.dataset.s));
 
+function withTimeout(p,ms,label){return Promise.race([p,new Promise((_,rej)=>setTimeout(()=>rej(new Error(label)),ms))]);}
 async function ensureModel(){ if(landmarker)return; statusEl.textContent="Loading pose model… (first time only)";
-  const vision=await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.12/wasm");
+  const vision=await withTimeout(FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.12/wasm"),20000,"Couldn't download the tracking engine. Check your connection and try again.");
   const opts=d=>({baseOptions:{modelAssetPath:"https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",delegate:d},runningMode:"IMAGE",numPoses:1,minPoseDetectionConfidence:0.5});
-  try{landmarker=await PoseLandmarker.createFromOptions(vision,opts("GPU"));}catch(e){landmarker=await PoseLandmarker.createFromOptions(vision,opts("CPU"));} }
+  try{
+    landmarker=await withTimeout(PoseLandmarker.createFromOptions(vision,opts("GPU")),8000,"GPU init timed out");
+  }catch(e){
+    statusEl.textContent="Loading pose model… (using CPU tracker)";
+    landmarker=await withTimeout(PoseLandmarker.createFromOptions(vision,opts("CPU")),25000,"Couldn't load the pose model on this device. Try refreshing the page, or a different browser.");
+  } }
 function seek(t){return new Promise(res=>{const h=async()=>{vid.removeEventListener("seeked",h);
   await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));res();};
   vid.addEventListener("seeked",h); vid.currentTime=Math.min(t,Math.max(0,vid.duration-0.001));});}
@@ -581,7 +587,8 @@ function waitBuffered(){return new Promise(res=>{ if(vid.readyState>=4)return re
   vid.addEventListener("canplaythrough",h); vid.preload="auto"; try{vid.load();}catch(e){} setTimeout(res,4000);});}
 
 analyzeBtn.onclick=async()=>{ try{ errEl.textContent=""; analyzeBtn.disabled=true; progWrap.classList.remove("hidden");
-  await ensureModel(); if(!vid.duration||!isFinite(vid.duration)){await new Promise(r=>{vid.onloadedmetadata=r;});}
+  await ensureModel(); if(!vid.duration||!isFinite(vid.duration)){await new Promise(r=>{vid.onloadedmetadata=r; setTimeout(r,5000);});}
+  if(!vid.duration||!isFinite(vid.duration)){throw new Error("Couldn't read this video. Try re-selecting the clip.");}
   statusEl.textContent="Buffering video…"; await waitBuffered();
   const W=Math.min(480,vid.videoWidth||480),scale=W/(vid.videoWidth||480),H=Math.round((vid.videoHeight||854)*scale);
   overlay.width=vid.videoWidth||480; overlay.height=vid.videoHeight||854; du=new DrawingUtils(octx);
