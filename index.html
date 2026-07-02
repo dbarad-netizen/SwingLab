@@ -288,13 +288,19 @@ function bumpStreak(p){
   const t=todayStr();
   if(p.lastActive===t) return 0;
   const y=new Date(Date.now()-86400000).toISOString().slice(0,10);
-  p.streak = (p.lastActive===y) ? (p.streak||0)+1 : 1;
+  if(p.lastActive===y){ p.streak=(p.streak||0)+1; }
+  else if(p.lastActive&&(p.freezes||0)>0){ p.freezes--; p.streak=(p.streak||0)+1; setTimeout(()=>toast('🧊 Streak freeze used — streak saved!'),300); }
+  else { p.streak=1; }
   p.lastActive=t; return 20; // daily bonus xp
 }
 function newBadges(p){ const have=new Set(p.badges); const fresh=[];
   for(const b of BADGES){ if(b.test(p)&&!have.has(b.id)){ p.badges.push(b.id); fresh.push(b); } } return fresh; }
 function award(p, xp, reason){
-  p.xp+=xp; p.coins+=Math.floor(xp/5);
+  p.xp+=xp;
+  const _t=todayStr(); if(!p._earn||p._earn.d!==_t)p._earn={d:_t,c:0};
+  let _add=Math.floor(xp/5); const _CAP=250;
+  if(p._earn.c+_add>_CAP)_add=Math.max(0,_CAP-p._earn.c);
+  p._earn.c+=_add; p.coins+=_add;
   const fresh=newBadges(p); setProfile(p);
   $("#coinTop").textContent="🪙 "+p.coins;
   let msg="+"+xp+" XP"+(reason?" · "+reason:"");
@@ -430,7 +436,11 @@ function initAccountUI(){
 }
 
 /* ============ SOCIAL DATA ============ */
-async function fetchGlobal(){ try{ const {data}=await sb.from("profiles").select("id,username,best_bat,xp").order("best_bat",{ascending:false,nullsFirst:false}).limit(50); return data||[]; }catch(e){ return []; } }
+async function fetchGlobal(){ try{ const {data}=await sb.from("profiles").select("id,username,best_bat,xp").not("best_bat","is",null).lte("best_bat",110).order("best_bat",{ascending:false}).limit(50); return data||[]; }catch(e){ return []; } }
+async function myPercentile(){ try{ if(!ME||!ME.best_bat||ME.best_bat>110)return null;
+  const {count:total}=await sb.from('profiles').select('*',{count:'exact',head:true}).not('best_bat','is',null).lte('best_bat',110);
+  const {count:better}=await sb.from('profiles').select('*',{count:'exact',head:true}).gt('best_bat',ME.best_bat).lte('best_bat',110);
+  if(!total)return null; return Math.max(1,Math.round(100*((better||0)+1)/total)); }catch(e){ return null; } }
 async function fetchFriends(){ if(!ME)return[]; try{ const {data:fr}=await sb.from("friendships").select("friend_id").eq("user_id",ME.id);
   const ids=(fr||[]).map(r=>r.friend_id).concat(ME.id);
   const {data}=await sb.from("profiles").select("id,username,best_bat,xp").in("id",ids).order("best_bat",{ascending:false,nullsFirst:false}); return data||[]; }catch(e){ return []; } }
@@ -500,7 +510,7 @@ async function renderCompete(){
   }
   el.innerHTML=`
     <div class="card"><h3>Your player card</h3>
-      <div class="mission"><div class="ic">🦅</div><div><div class="t">${ME.username}</div>
+      <div class="mission"><div class="ic">${getProfile().avatar||'🦅'}</div><div><div class="t">${ME.username}${getProfile().title?` <span style="font-weight:600;color:var(--mut);font-size:12px">· ${getProfile().title}</span>`:''}</div>
         <div class="s">Friend code <b>${ME.friend_code}</b> · ${ME.best_bat?Math.round(ME.best_bat)+" mph best":"no bat speed yet"}</div></div></div>
       <div class="ctrls"><input id="friendCode" placeholder="Enter a friend's code" autocapitalize="characters" style="flex:1;padding:9px;border:1px solid var(--line);border-radius:9px;text-transform:uppercase">
         <button class="mini" id="addFriendBtn">Add</button></div></div>
@@ -518,11 +528,14 @@ function wireWeekly(){ const cb=$("#claimBtn"); if(cb) cb.onclick=()=>{ const p2
   p2._wkClaim=weekKey(); setProfile(p2); award(p2,150,"weekly challenge"); renderCompete(); }; }
 async function renderBoard(){ const el=$("#boardList"); if(!el)return;
   const rows= boardMode==="global"? await fetchGlobal() : await fetchFriends();
-  el.innerHTML = rows.length ? rows.map((r,i)=>`<div class="lead ${r.id===ME.id?'me':''}"><div class="rank">${i+1}</div>
-     <div class="ava">${r.id===ME.id?'🦅':((r.username||'?')[0]||'?').toUpperCase()}</div><div class="nm">${r.username||'player'}</div>
+  let extra="";
+  if(boardMode==="global"){ const pct=await myPercentile();
+    extra=`<div style="font-size:12.5px;color:var(--mut);margin-bottom:6px">All-time bat speed · speeds over 110 mph hidden as unverified${pct?` · you're in the <b>top ${pct}%</b> 💪`:''}</div>`; }
+  el.innerHTML = extra + (rows.length ? rows.map((r,i)=>`<div class="lead ${r.id===ME.id?'me':''}"><div class="rank">${i+1}</div>
+     <div class="ava">${r.id===ME.id?(getProfile().avatar||'🦅'):((r.username||'?')[0]||'?').toUpperCase()}</div><div class="nm">${r.username||'player'}</div>
      <div class="xp">${r.best_bat?Math.round(r.best_bat)+' mph':'—'}</div>
      ${(r.id!==ME.id&&boardMode==='friends')?`<button class="mini" style="margin-left:8px" data-ch="${r.id}">Challenge</button>`:''}</div>`).join("")
-    : `<div style="color:var(--mut);font-size:13px">${boardMode==='friends'?'Add a friend by code to see them here.':'No players ranked yet — be the first!'}</div>`;
+    : `<div style="color:var(--mut);font-size:13px">${boardMode==='friends'?'Add a friend by code to see them here.':'No players ranked yet — be the first!'}</div>`);
   document.querySelectorAll("#boardList [data-ch]").forEach(b=>b.onclick=()=>challengeFriend(b.dataset.ch));
 }
 async function renderChallenges(){ const el=$("#challList"); if(!el)return; const list=await fetchChallenges();
@@ -534,26 +547,45 @@ async function renderChallenges(){ const el=$("#challList"); if(!el)return; cons
 
 /* ============ SHOP ============ */
 const PRODUCTS=[
+  {id:"freeze",em:"🧊",t:"Streak Freeze",coins:150,kind:"consumable"},
+  {id:"av_tiger",em:"🐯",t:"Tiger Avatar",coins:180,kind:"avatar"},
+  {id:"av_shark",em:"🦈",t:"Shark Avatar",coins:180,kind:"avatar"},
+  {id:"av_goat",em:"🐐",t:"GOAT Avatar",coins:400,kind:"avatar"},
+  {id:"ti_barrel",em:"👑",t:"“Barrel King” Title",coins:250,kind:"title",v:"Barrel King"},
+  {id:"ti_laser",em:"⚡",t:"“Laser Show” Title",coins:250,kind:"title",v:"Laser Show"},
   {id:"tee",em:"🟡",t:"Batting Tee",coins:120},
   {id:"net",em:"🥅",t:"Hitting Net",coins:300},
-  {id:"wbat",em:"🏏",t:"Weighted Bat",coins:200},
+  {id:"wbat",em:"🪵",t:"Weighted Bat",coins:200},
   {id:"plane",em:"📐",t:"Swing-Plane Trainer",coins:260},
   {id:"gloves",em:"🧤",t:"Batting Gloves",coins:90},
   {id:"launch",em:"🚀",t:"Launch-Angle Tee",coins:340},
 ];
 function renderShop(){
   const p=getProfile();
-  const grid=PRODUCTS.map(x=>{const own=(p.owned||[]).includes(x.id);const can=p.coins>=x.coins;
+  const cell=x=>{ const own=(p.owned||[]).includes(x.id); const can=p.coins>=x.coins;
+    let label,cls="",dis=false;
+    if(x.kind==="consumable"){ label=can?"Buy":"Need more"; dis=!can; }
+    else if(own&&x.kind==="avatar"){ label=(p.avatar===x.em)?"✓ In use":"Use"; cls="own"; }
+    else if(own&&x.kind==="title"){ label=(p.title===x.v)?"✓ In use":"Use"; cls="own"; }
+    else if(own){ label="✓ Redeemed"; cls="own"; }
+    else { label=can?"Redeem":"Need more"; dis=!can; }
     return `<div class="prod"><div class="em">${x.em}</div><div class="t">${x.t}</div><div class="p">🪙 ${x.coins}</div>
-      <button class="${own?'own':''}" data-id="${x.id}" data-c="${x.coins}" ${(!own&&!can)?'disabled style=opacity:.5':''}>${own?'✓ Redeemed':(can?'Redeem':'Need more')}</button></div>`;}).join("");
-  $("#v-shop").innerHTML=`<div class="card"><h3>Gear shop · spend your coins 🪙 ${p.coins}</h3>
-    <div class="shop">${grid}</div>
-    <div class="demoNote">Concept catalog. Earn coins by training; real checkout/affiliate links come later.</div></div>`;
-  document.querySelectorAll(".prod button").forEach(b=>{ if(b.classList.contains("own"))return;
-    b.onclick=()=>{ const p2=getProfile(); const id=b.dataset.id, c=+b.dataset.c;
-      if((p2.owned||[]).includes(id))return; if(p2.coins<c){toast("Not enough coins");return;}
-      p2.coins-=c; p2.owned.push(id); newBadges(p2); setProfile(p2); $("#coinTop").textContent="🪙 "+p2.coins;
-      toast("Redeemed! 🛒"); renderShop(); }; });
+      <button class="${cls}" data-id="${x.id}" ${dis?'disabled style=opacity:.5':''}>${label}</button></div>`; };
+  const dig=PRODUCTS.filter(x=>x.kind), gear=PRODUCTS.filter(x=>!x.kind);
+  $("#v-shop").innerHTML=`<div class="card"><h3>Gear shop · spend your coins 🪙 ${p.coins}${(p.freezes||0)?` · 🧊 ×${p.freezes}`:''}</h3>
+    <div style="font-size:12px;color:var(--mut);margin:2px 0 6px;letter-spacing:.4px">BOOSTS & STYLE</div><div class="shop">${dig.map(cell).join('')}</div>
+    <div style="font-size:12px;color:var(--mut);margin:12px 0 6px;letter-spacing:.4px">TRAINING GEAR (CONCEPT)</div><div class="shop">${gear.map(cell).join('')}</div>
+    <div class="demoNote">Earn coins by training — coach-assigned drills pay the most. Daily coin cap: 250 🪙.</div></div>`;
+  document.querySelectorAll(".prod button").forEach(b=>{ b.onclick=()=>{
+      const p2=getProfile(); const x=PRODUCTS.find(i=>i.id===b.dataset.id); if(!x)return;
+      const own=(p2.owned||[]).includes(x.id);
+      if(x.kind==="consumable"){ if(p2.coins<x.coins){toast("Not enough coins");return;} p2.coins-=x.coins; p2.freezes=(p2.freezes||0)+1; toast("🧊 Streak freeze ready"); }
+      else if(own&&x.kind==="avatar"){ p2.avatar=x.em; toast("Avatar equipped "+x.em); }
+      else if(own&&x.kind==="title"){ p2.title=x.v; toast("Title equipped 👑"); }
+      else if(own){ return; }
+      else { if(p2.coins<x.coins){toast("Not enough coins");return;} p2.coins-=x.coins; p2.owned.push(x.id);
+        if(x.kind==="avatar")p2.avatar=x.em; if(x.kind==="title")p2.title=x.v; toast("Redeemed! 🛒"); }
+      newBadges(p2); setProfile(p2); $("#coinTop").textContent="🪙 "+p2.coins; renderShop(); }; });
 }
 
 /* ============ ANALYZER (existing) ============ */
@@ -850,6 +882,16 @@ $("#saveBtn").onclick=async()=>{ if(!A)return; const kf=$("#kf1"); let thumb="";
 };
 
 /* ============ COACH / TEAM HUB ============ */
+function timeAgo(ts){ const sec=(Date.now()-new Date(ts).getTime())/1000;
+  if(sec<60)return "just now"; if(sec<3600)return Math.floor(sec/60)+"m ago";
+  if(sec<86400)return Math.floor(sec/3600)+"h ago"; return Math.floor(sec/86400)+"d ago"; }
+async function fetchTeamSwings(ids){ if(!ids.length)return[]; try{
+  const since=new Date(Date.now()-7*86400000).toISOString();
+  const {data}=await sb.from('swings').select('*').in('user_id',ids).gte('created_at',since).order('created_at',{ascending:false}).limit(25);
+  return data||[]; }catch(e){ return []; } }
+async function coachNoteTo(playerId,pname){ const msg=prompt('Quick note to '+pname+':'); if(!msg)return;
+  try{ await notify(playerId,'coach_note','Coach '+ME.username+': '+msg.slice(0,140)); toast('Note sent 💬'); }catch(e){ toast('Could not send'); } }
+async function cheerSwing(playerId,score){ try{ await notify(playerId,'cheer','Coach '+ME.username+' liked your '+(score?score+'-point ':'')+'swing 👏'); toast('Sent 👏'); }catch(e){} }
 async function fetchRoster(teamId){ try{ const {data:tm}=await sb.from('team_members').select('user_id').eq('team_id',teamId);
   const ids=(tm||[]).map(r=>r.user_id); if(!ids.length)return[];
   const {data:ps}=await sb.from('profiles').select('id,username,best_bat,swings,best_head').in('id',ids).order('best_bat',{ascending:false,nullsFirst:false}); return ps||[]; }catch(e){ return []; } }
@@ -874,7 +916,8 @@ async function assignDrill(playerId){
     await notify(playerId,'drill','Coach '+ME.username+' assigned you: '+d.t+' 🎯');
     toast('Assigned '+d.t+' ✅'); }catch(e){ toast('Could not assign'); } }
 async function cheerPlayer(playerId){ try{ await notify(playerId,'cheer','Coach '+ME.username+' cheered you on 👏'); toast('Cheered! 👏'); }catch(e){} }
-async function markAssignmentDone(id){ try{ await sb.from('assignments').update({done:true}).eq('id',id); toast('Nice work! ✅'); renderTeam(); }catch(e){} }
+async function markAssignmentDone(id){ try{ await sb.from('assignments').update({done:true}).eq('id',id);
+  const p2=getProfile(); award(p2,75,"coach drill ✅"); renderTeam(); }catch(e){} }
 async function renderTeam(){
   const el=$("#teamContent"); if(!el)return;
   if(!ME){ el.innerHTML='<div class="card"><div class="empty"><div class="big">👥</div>Sign in to create a team as a coach, or join your team by code.</div><button class="btn" id="teamSignin">Create account / Sign in</button></div>';
@@ -892,11 +935,21 @@ async function renderTeam(){
   if(asg.length){ html+='<div class="card"><h3>Your assignments from coach</h3>'
     +asg.map(a=>`<div class="item"><div class="ic">🎯</div><div><div class="t">${a.drill}</div><div class="s">${a.note||''}</div></div><div class="act"><button class="doBtn" data-asg="${a.id}">Mark done</button></div></div>`).join('')+'</div>'; }
   for(const t of coachTeams){ const roster=await fetchRoster(t.id);
-    html+=`<div class="card"><h3>${t.name} · you coach</h3><div style="font-size:12.5px;color:var(--mut);margin-bottom:8px">Join code <b>${t.join_code}</b> · ${roster.length} player${roster.length===1?'':'s'}</div>`
+    const rids=roster.map(p=>p.id); const nameOf={}; roster.forEach(p=>nameOf[p.id]=p.username||'player');
+    const queue=await fetchTeamSwings(rids);
+    let cDone=0,cTot=0; try{ const {data:ag}=await sb.from('assignments').select('done').eq('team_id',t.id); (ag||[]).forEach(a=>{cTot++; if(a.done)cDone++;}); }catch(e){}
+    html+=`<div class="card"><h3>${t.name} · you coach</h3><div style="font-size:12.5px;color:var(--mut);margin-bottom:8px">Join code <b>${t.join_code}</b> · ${roster.length} player${roster.length===1?'':'s'}${cTot?` · drills done <b>${cDone}/${cTot}</b>`:''}</div>`
       +(roster.length?roster.map(p=>`<div class="player"><div class="ava">${((p.username||'?')[0]||'?').toUpperCase()}</div>
         <div><div class="nm">${p.username}</div><div class="st">${p.best_bat?Math.round(p.best_bat)+' mph best':'no bat speed yet'} · ${p.swings||0} swings</div></div>
         <div style="margin-left:auto;display:flex;gap:6px"><button class="mini" data-assign="${p.id}">Assign</button><button class="mini" data-cheer="${p.id}">👏</button></div></div>`).join('')
         :`<div style="font-size:13px;color:var(--mut)">No players yet — share join code <b>${t.join_code}</b> with your team.</div>`)+'</div>';
+    html+=`<div class="card"><h3>Review queue · last 7 days</h3>`
+      +(queue.length? queue.map(w=>`<div class="item"><div class="ic">${w.score>=80?'🟢':w.score>=60?'🟡':'🔴'}</div>
+        <div><div class="t">${nameOf[w.user_id]||'player'} · ${w.score!=null?w.score+' pts':'—'}${w.bat_mph?' · '+Math.round(w.bat_mph)+' mph':''}</div>
+        <div class="s">${((w.fix||'').slice(0,80))||'No fix noted'} · ${timeAgo(w.created_at)}</div></div>
+        <div class="act" style="display:flex;gap:6px"><button class="mini" data-cheerswing="${w.user_id}" data-score="${w.score==null?'':w.score}">👏</button><button class="mini" data-note="${w.user_id}" data-nm="${nameOf[w.user_id]||'player'}">💬</button></div></div>`).join('')
+      : '<div style="font-size:13px;color:var(--mut)">No swings from your roster this week. Nudge them with an assignment 🎯</div>')
+      +'</div>';
   }
   for(const t of memTeams){ const roster=await fetchRoster(t.id);
     html+=`<div class="card"><h3>${t.name}</h3><div style="font-size:12.5px;color:var(--mut);margin-bottom:8px">${roster.length} players</div>`
@@ -909,6 +962,8 @@ async function renderTeam(){
   document.querySelectorAll('[data-asg]').forEach(b=>b.onclick=()=>markAssignmentDone(b.dataset.asg));
   document.querySelectorAll('[data-assign]').forEach(b=>b.onclick=()=>assignDrill(b.dataset.assign));
   document.querySelectorAll('[data-cheer]').forEach(b=>b.onclick=()=>cheerPlayer(b.dataset.cheer));
+  document.querySelectorAll('[data-cheerswing]').forEach(b=>b.onclick=()=>cheerSwing(b.dataset.cheerswing,b.dataset.score));
+  document.querySelectorAll('[data-note]').forEach(b=>b.onclick=()=>coachNoteTo(b.dataset.note,b.dataset.nm));
 }
 
 /* ============ DEMO / SYNTHETIC DATA ============ */
